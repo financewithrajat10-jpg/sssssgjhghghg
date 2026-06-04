@@ -1,0 +1,12 @@
+.env
+.gemini-keys.json
+.stock-keys.json
+node_modules/
+server.log
+.server*.log
+.tmp-server*.log
+debug.log
+.tmp-audio/
+.tmp-stock-video/
+image-reel-builder/.tmp-binary-payload.json
+image-reel-builder/.tmp-renders/

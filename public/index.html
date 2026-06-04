@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hindi Voice Studio</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="app-header" aria-labelledby="app-title">
+        <div class="brand-block">
+          <p class="eyebrow">Creator studio</p>
+          <h1 id="app-title">Hindi Voice Studio</h1>
+        </div>
+        <div class="header-actions">
+          <div class="status-pill" id="statusPill">Checking API keys</div>
+          <button class="ghost-action-button" id="exportPackButton" type="button">Export pack</button>
+          <button class="settings-button" id="settingsButton" type="button" aria-label="Open settings">Settings</button>
+        </div>
+      </header>
+
+      <nav class="app-tabs" aria-label="Workspace navigation">
+        <button class="tab-button is-active" type="button" data-tab-target="scriptStudioPane">Script Studio</button>
+        <button class="tab-button" type="button" data-tab-target="voicePane">Voice</button>
+        <button class="tab-button" type="button" data-tab-target="voicePane" data-tab-action="rewrite">Rewrite</button>
+        <button class="tab-button" type="button" data-tab-target="storyboardPane">Storyboard</button>
+        <button class="tab-button" type="button" data-tab-target="memoryPane">Memory</button>
+        <button class="tab-button" type="button" data-tab-action="settings">Settings</button>
+      </nav>
+
+      <section class="script-studio-panel section-band tab-panel is-active" id="scriptStudioPane" data-tab-panel aria-label="Script Studio">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Script Studio</p>
+            <h2>Research and write TTS-ready reels</h2>
+          </div>
+          <div class="button-row">
+            <button class="ghost-action-button" id="cartoonModeButton" type="button">Cartoon mode</button>
+            <button class="secondary-button" id="scriptGenerateButton" type="button">Generate script</button>
+            <button class="ghost-action-button" id="scriptUseButton" type="button" hidden>Use for voice</button>
+            <button class="ghost-action-button" id="scriptCopyButton" type="button" hidden>Copy script</button>
+          </div>
+        </div>
+
+        <div class="script-studio-layout">
+          <div class="script-controls">
+            <div class="field-group wide-field">
+              <label for="scriptStudioTopic">Topic or rough idea</label>
+              <textarea class="direction-box script-topic-box" id="scriptStudioTopic" placeholder="Example: why overthinking feels like preparation but actually drains your confidence"></textarea>
+            </div>
+
+            <div class="script-control-grid">
+              <div class="field-group">
+                <label for="scriptContentType">Content type</label>
+                <select id="scriptContentType">
+                  <option value="kids-cartoon">Kids Cartoon</option>
+                  <option value="reel" selected>Reel / Short</option>
+                  <option value="long-story">Long story</option>
+                  <option value="podcast">Podcast</option>
+                  <option value="documentary">Documentary</option>
+                </select>
+              </div>
+
+              <div class="field-group">
+                <label for="scriptTemplate">Template</label>
+                <select id="scriptTemplate">
+                  <option value="custom" selected>Custom</option>
+                  <option value="kids-cartoon-adventure">Kids cartoon adventure</option>
+                  <option value="psychology-dark-hook">Psychology dark hook</option>
+                  <option value="relationship-heartbreak">Relationship heartbreak</option>
+                  <option value="real-story-suspense">Real story suspense</option>
+                  <option value="motivation-punch">Motivation punch</option>
+                  <option value="horror-twist">Horror twist</option>
+                  <option value="business-lesson">Business lesson</option>
+                  <option value="crime-mystery">Crime mystery</option>
+                </select>
+              </div>
+
+              <div class="field-group">
+                <label for="scriptCategory">Category</label>
+                <select id="scriptCategory">
+                  <option value="kids-cartoon">Kids Cartoon</option>
+                  <option value="psychology">Psychology</option>
+                  <option value="real-story">Real Story</option>
+                  <option value="motivation">Motivation</option>
+                  <option value="horror">Horror</option>
+                  <option value="crime-mystery">Crime Mystery</option>
+                  <option value="relationship">Relationship</option>
+                  <option value="mythology">Mythology</option>
+                  <option value="history">History</option>
+                  <option value="business">Business</option>
+                </select>
+              </div>
+
+              <div class="field-group">
+                <label for="scriptDuration">Duration</label>
+                <select id="scriptDuration">
+                  <option value="30">30 sec</option>
+                  <option value="45">45 sec</option>
+                  <option value="60" selected>60 sec</option>
+                  <option value="90">90 sec</option>
+                  <option value="120">2 min</option>
+                  <option value="180">3 min</option>
+                  <option value="240">4 min</option>
+                  <option value="300">5 min</option>
+                </select>
+              </div>
+
+              <div class="field-group">
+                <label for="scriptLanguage">Language</label>
+                <select id="scriptLanguage">
+                  <option value="Hinglish" selected>Hinglish</option>
+                  <option value="Hindi">Hindi</option>
+                  <option value="Simple Hindi">Simple Hindi</option>
+                </select>
+              </div>
+
+              <div class="field-group">
+                <label for="scriptResearchDepth">Research</label>
+                <select id="scriptResearchDepth">
+                  <option value="light" selected>Light search</option>
+                  <option value="deep">Deep search</option>
+                  <option value="off">Off</option>
+                </select>
+              </div>
+
+              <div class="field-group">
+                <label for="scriptModeSelect">Script mode</label>
+                <select id="scriptModeSelect">
+                  <option value="advanced-narrator" selected>Advanced narrator</option>
+                  <option value="single">Single narrator</option>
+                  <option value="dialogue">2-speaker dialogue</option>
+                </select>
+              </div>
+
+              <div class="field-group">
+                <label for="scriptTone">Tone</label>
+                <select id="scriptTone">
+                  <option value="playful">Playful</option>
+                  <option value="suspense" selected>Suspense</option>
+                  <option value="emotional">Emotional</option>
+                  <option value="energetic">Energetic</option>
+                  <option value="calm">Calm</option>
+                  <option value="horror">Horror</option>
+                  <option value="funny">Funny</option>
+                  <option value="documentary">Documentary</option>
+                </select>
+              </div>
+
+              <div class="field-group">
+                <label for="scriptEnergy">Energy</label>
+                <select id="scriptEnergy">
+                  <option value="low">Low</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+
+              <div class="field-group">
+                <label for="scriptVoice">Voice</label>
+                <select id="scriptVoice"></select>
+              </div>
+            </div>
+
+            <div class="field-group">
+              <label for="scriptAudience">Audience</label>
+              <input id="scriptAudience" type="text" placeholder="Example: Hindi creators, college students, startup audience" />
+            </div>
+
+            <div class="field-group">
+              <label for="scriptUserVoice">Your creator voice</label>
+              <textarea class="direction-box" id="scriptUserVoice" placeholder="Optional: direct, emotional, dark suspense, no cringe motivation, more Indian examples"></textarea>
+            </div>
+          </div>
+
+          <div class="script-result-panel">
+            <div class="script-result" id="scriptStudioResult">
+              <p class="empty-memory">Enter a topic, choose a category, then generate a researched reel script.</p>
+            </div>
+            <div class="script-sources" id="scriptSourceList"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="voicePane" data-tab-panel hidden>
+        <section class="workbench" aria-label="Voice generation workspace">
+          <section class="script-workspace" aria-label="Script editor and audio output">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Script</p>
+                <h2>Story text</h2>
+              </div>
+              <div class="meter-row">
+                <span id="charCount">0 characters</span>
+                <button class="ghost-button" id="clearButton" type="button">Clear</button>
+              </div>
+            </div>
+
+            <label class="visually-hidden" for="scriptText">Script</label>
+            <textarea id="scriptText" spellcheck="false">&#2343;&#2368;&#2352;&#2375;-&#2343;&#2368;&#2352;&#2375; &#2342;&#2352;&#2357;&#2366;&#2395;&#2366; &#2309;&#2346;&#2344;&#2375; &#2310;&#2346; &#2326;&#2369;&#2354;&#2366;&#2404; &#2325;&#2350;&#2352;&#2375; &#2350;&#2375;&#2306; &#2328;&#2369;&#2346; &#2309;&#2306;&#2343;&#2375;&#2352;&#2366; &#2341;&#2366;, &#2354;&#2375;&#2325;&#2367;&#2344; &#2350;&#2375;&#2395; &#2346;&#2352; &#2352;&#2326;&#2368; &#2328;&#2396;&#2368; &#2348;&#2306;&#2342; &#2361;&#2379;&#2344;&#2375; &#2325;&#2375; &#2348;&#2366;&#2342; &#2349;&#2368; &#2335;&#2367;&#2325;-&#2335;&#2367;&#2325; &#2325;&#2352; &#2352;&#2361;&#2368; &#2341;&#2368;&#2404; &#2340;&#2349;&#2368; &#2346;&#2368;&#2331;&#2375; &#2360;&#2375; &#2319;&#2325; &#2310;&#2357;&#2366;&#2395; &#2310;&#2312;: &#2340;&#2369;&#2350; &#2357;&#2366;&#2346;&#2360; &#2325;&#2381;&#2351;&#2379;&#2306; &#2310;&#2319;?</textarea>
+
+            <section class="output-panel" aria-label="Generated audio">
+              <div class="output-copy">
+                <p class="eyebrow">Output</p>
+                <h2 id="outputTitle">Ready for your first take</h2>
+              </div>
+              <audio id="audioPlayer" controls></audio>
+              <div class="download-group">
+                <a class="download-link" id="downloadLink" download="hindi-voice.wav">WAV</a>
+                <a class="download-link" id="mp3DownloadLink" download="hindi-voice.mp3">MP3</a>
+              </div>
+              <p class="message" id="message"></p>
+              <pre class="error-detail" id="errorDetail"></pre>
+            </section>
+
+            <section class="voice-variant-panel" id="voiceVariantPanel" aria-label="Saved voice takes">
+              <div class="voice-variant-head">
+                <div>
+                  <p class="eyebrow">Project takes</p>
+                  <h3>Voice comparisons</h3>
+                </div>
+                <span>No takes yet</span>
+              </div>
+              <p class="hint">Generate multiple voices from the same script; each take stays attached to this project so you can compare and choose one before SRT or image prompts.</p>
+            </section>
+          </section>
+
+          <aside class="controls-panel" aria-label="Voice controls">
+            <div class="section-heading compact-heading">
+              <div>
+                <p class="eyebrow">Voice</p>
+                <h2>Setup</h2>
+              </div>
+              <button class="primary-button small-primary" id="generateButton" type="button">Generate</button>
+            </div>
+
+            <div class="control-grid">
+              <div class="field-group">
+                <label for="provider">Provider</label>
+                <select id="provider">
+                  <option value="gemini">Gemini TTS</option>
+                  <option value="nvidia">NVIDIA TTS</option>
+                </select>
+              </div>
+
+              <div class="field-group wide-field">
+                <label for="model">Model</label>
+                <select id="model"></select>
+                <p class="hint" id="modelHint"></p>
+              </div>
+
+              <div class="field-group">
+                <label for="voice">Voice</label>
+                <select id="voice"></select>
+              </div>
+
+              <div class="field-group wide-field">
+                <label for="voiceMode">Mode</label>
+                <select id="voiceMode">
+                  <option value="single">Single narrator</option>
+                  <option value="multi">2-speaker dialogue</option>
+                  <option value="rewrite">Normal story -> advanced dialogue</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="speaker-panel" id="speakerPanel" hidden>
+              <div class="speaker-row">
+                <label id="speakerOneLabel" for="speakerOneName">Speaker 1</label>
+                <input id="speakerOneName" type="text" placeholder="Speaker 1" />
+                <select id="speakerOneVoice"></select>
+              </div>
+              <div class="speaker-row">
+                <label id="speakerTwoLabel" for="speakerTwoName">Speaker 2</label>
+                <input id="speakerTwoName" type="text" placeholder="Speaker 2" />
+                <select id="speakerTwoVoice"></select>
+              </div>
+            </div>
+
+            <div class="rewrite-panel" id="rewritePanel" hidden>
+              <div class="field-group">
+                <label for="rewriteVoiceChoice">Rewrite voices</label>
+                <select id="rewriteVoiceChoice">
+                  <option value="auto">Auto choose best two voices</option>
+                  <option value="selected">Use selected voices</option>
+                </select>
+              </div>
+              <div class="field-group">
+                <label for="rewriteMood">Rewrite emotion</label>
+                <select id="rewriteMood"></select>
+              </div>
+              <div class="field-group">
+                <label for="rewriteStyle">Rewrite direction</label>
+                <textarea class="direction-box" id="rewriteStyle" placeholder="Optional direction for Gemini 3 Flash Preview"></textarea>
+              </div>
+              <button class="secondary-button" id="rewriteButton" type="button">Rewrite script</button>
+            </div>
+
+            <div class="field-group">
+              <label>Mood</label>
+              <div class="mood-grid" id="moodGrid" role="radiogroup" aria-label="Voice mood"></div>
+            </div>
+
+            <div class="field-group">
+              <label for="style">Custom direction</label>
+              <textarea class="direction-box" id="style" placeholder="Pauses, pacing, accent, emotion, or delivery notes"></textarea>
+            </div>
+          </aside>
+        </section>
+      </section>
+
+      <section class="storyboard-panel section-band tab-panel" id="storyboardPane" data-tab-panel hidden aria-label="Storyboard image prompts">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Media workflows</p>
+            <h2>Images and stock video</h2>
+          </div>
+          <div class="button-row">
+            <button class="secondary-button" id="storyboardButton" type="button">Generate Flow prompts</button>
+            <button class="ghost-action-button" id="copyAllPromptsButton" type="button">Copy all prompts</button>
+          </div>
+        </div>
+
+        <div class="storyboard-toolbar">
+          <div class="field-group">
+            <label for="storyboardMode">Mode</label>
+            <select id="storyboardMode">
+              <option value="fast">Fast: script + audio duration</option>
+              <option value="audio-aware">Audio-aware direct: audio only</option>
+              <option value="audio-detailed">Audio-aware detailed: audio timeline + prompts</option>
+              <option value="srt-director">SRT-first director: reusable transcript + prompts</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label for="platform">Format</label>
+            <select id="platform">
+              <option value="Facebook, Instagram Reels, and YouTube Shorts">9:16 reels/shorts</option>
+              <option value="YouTube landscape video">16:9 YouTube</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label for="targetSecondsPerImage">Pacing</label>
+            <select id="targetSecondsPerImage">
+              <option value="3">Max 3 sec/image</option>
+              <option value="4">Max 4 sec/image</option>
+              <option value="5" selected>Max 5 sec/image</option>
+              <option value="6">Max 6 sec/image</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label for="promptQuality">Prompt quality</label>
+            <select id="promptQuality">
+              <option value="fast">Fast</option>
+              <option value="detailed" selected>Detailed</option>
+              <option value="conceptual-sketch">Conceptual sketch</option>
+              <option value="ultra-cinematic">Ultra cinematic</option>
+              <option value="consistent-character">Consistent character</option>
+              <option value="horror-realism">Horror realism</option>
+              <option value="youtube-thumbnail">YouTube thumbnail</option>
+              <option value="kids-cartoon-flow">Kids cartoon</option>
+            </select>
+          </div>
+        </div>
+        <p class="hint" id="storyboardModeHint">Fast mode uses your script plus the generated audio duration.</p>
+
+        <div class="storyboard-layout">
+          <div class="storyboard-settings">
+            <div class="field-group">
+              <label>Image mood</label>
+              <div class="mood-grid image-mood-grid" id="imageMoodGrid" role="radiogroup" aria-label="Image mood"></div>
+            </div>
+
+            <div class="field-group">
+              <label for="imageStyle">Image style for Flow</label>
+              <textarea class="direction-box image-style-box" id="imageStyle">Keep every image in one cohesive visual series. Repeat the same palette, lighting, texture, and recurring character or symbolic motif. Avoid random unrelated portraits unless the selected image mood needs them.</textarea>
+            </div>
+
+            <section class="timeline-export-panel" aria-label="Video Builder timeline export">
+              <div class="timeline-export-head">
+                <div>
+                  <p class="eyebrow">Video Builder</p>
+                  <h3>Image timeline JSON</h3>
+                </div>
+                <button class="ghost-action-button" id="copyTimelineButton" type="button">Copy JSON</button>
+              </div>
+              <textarea class="timeline-export-box" id="timelineExport" readonly placeholder="Timeline JSON appears after storyboard generation."></textarea>
+            </section>
+
+            <section class="timeline-export-panel" aria-label="Subtitle SRT export">
+              <div class="timeline-export-head">
+                <div>
+                  <p class="eyebrow">Subtitles</p>
+                  <h3>Audio SRT</h3>
+                </div>
+                <div class="timeline-export-actions">
+                  <button class="ghost-action-button" id="copySrtButton" type="button" disabled>Copy SRT</button>
+                  <button class="ghost-action-button" id="downloadSrtButton" type="button" disabled>Download</button>
+                </div>
+              </div>
+              <textarea class="timeline-export-box srt-export-box" id="srtExport" readonly placeholder="SRT appears after audio-aware direct, audio-aware detailed, or SRT-first Director generation."></textarea>
+            </section>
+
+            <section class="timeline-export-panel stock-video-panel" aria-label="Stock video builder">
+              <div class="timeline-export-head">
+                <div>
+                  <p class="eyebrow">Video workflow</p>
+                  <h3>Stock MP4 from audio</h3>
+                </div>
+              </div>
+              <div class="stock-control-grid">
+                <div class="field-group">
+                  <label for="stockSource">Source</label>
+                  <select id="stockSource">
+                    <option value="both" selected>Pexels first, Pixabay fallback</option>
+                    <option value="pexels">Pexels only</option>
+                    <option value="pixabay">Pixabay only</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <label for="stockMaxClipDuration">Clip cap</label>
+                  <select id="stockMaxClipDuration">
+                    <option value="4">4 sec max</option>
+                    <option value="5" selected>5 sec max</option>
+                    <option value="6">6 sec max</option>
+                    <option value="8">8 sec max</option>
+                  </select>
+                </div>
+              </div>
+              <div class="stock-control-grid">
+                <div class="field-group">
+                  <label for="stockCaptionStyle">Caption style</label>
+                  <select id="stockCaptionStyle">
+                    <option value="creator-yellow" selected>Creator yellow pop</option>
+                    <option value="bold-pop">Bold white pop</option>
+                    <option value="cinematic-box">Cinematic box</option>
+                    <option value="horror-glow">Horror glow</option>
+                    <option value="clean-lower">Clean lower third</option>
+                    <option value="psych-teal">Psych teal</option>
+                    <option value="relationship-soft">Relationship soft</option>
+                    <option value="motivation-impact">Motivation impact</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <label for="stockCaptionAnimation">Caption animation</label>
+                  <select id="stockCaptionAnimation">
+                    <option value="auto" selected>Auto from style</option>
+                    <option value="pop">Creator pop</option>
+                    <option value="punch">Punch bounce</option>
+                    <option value="slide-up">Slide lift</option>
+                    <option value="kinetic">Kinetic snap</option>
+                    <option value="glitch">Glitch hit</option>
+                    <option value="horror">Horror drift</option>
+                    <option value="whisper">Whisper fade</option>
+                    <option value="impact">Impact hit</option>
+                    <option value="calm">Calm fade</option>
+                    <option value="fade">Smooth fade</option>
+                  </select>
+                </div>
+              </div>
+              <div class="stock-control-grid">
+                <div class="field-group">
+                  <label for="stockCaptionPlacement">Caption placement</label>
+                  <select id="stockCaptionPlacement">
+                    <option value="auto" selected>Smart auto</option>
+                    <option value="bottom">Bottom only</option>
+                    <option value="center">Center all</option>
+                    <option value="selected-center">Center selected</option>
+                    <option value="top">Top all</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <label for="stockCaptionMood">Caption mood</label>
+                  <select id="stockCaptionMood">
+                    <option value="auto" selected>Auto detect</option>
+                    <option value="psychology">Psychology</option>
+                    <option value="motivation">Motivation</option>
+                    <option value="horror">Horror / suspense</option>
+                    <option value="relationship">Relationship</option>
+                    <option value="documentary">Documentary</option>
+                  </select>
+                </div>
+              </div>
+              <div class="field-group">
+                <label for="stockCaptionCenter">Middle captions</label>
+                <input id="stockCaptionCenter" type="text" placeholder="Example: 1, 4, 12-15 or 00:00:20-00:00:24" />
+              </div>
+              <label class="checkbox-row">
+                <input id="stockIncludeAudio" type="checkbox" checked />
+                Add current voice audio
+              </label>
+              <label class="checkbox-row">
+                <input id="stockBurnSubtitles" type="checkbox" checked />
+                Burn current SRT captions
+              </label>
+              <label class="checkbox-row">
+                <input id="stockSmartCaptions" type="checkbox" />
+                Use Smart captions
+              </label>
+              <p class="hint" id="stockCaptionSummary">Normal captions are ready. Smart captions can redesign rhythm, highlights, and placement.</p>
+              <div class="timeline-export-actions">
+                <button class="ghost-action-button" id="stockTimelineButton" type="button">Create SRT</button>
+                <button class="ghost-action-button" id="stockSmartCaptionButton" type="button">Design captions</button>
+                <button class="secondary-button" id="stockPlanButton" type="button">Find stock clips</button>
+                <button class="ghost-action-button" id="stockRenderButton" type="button" disabled>Render MP4</button>
+                <a class="download-link" id="stockDownloadLink" download="stock-video.mp4">MP4</a>
+              </div>
+              <p class="hint">Video mode can create its own SRT from the current voice audio, then find stock footage from that timeline.</p>
+            </section>
+          </div>
+
+          <div class="storyboard-result-column">
+            <div class="storyboard-result" id="storyboardResult"></div>
+            <div class="stock-video-result" id="stockVideoResult"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="secondary-grid tab-panel" id="memoryPane" data-tab-panel hidden aria-label="Library and memory">
+        <section class="voice-demo-panel section-band" aria-label="Voice demos">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Voice library</p>
+              <h2>Demos</h2>
+            </div>
+            <button class="secondary-button" id="voiceDemosButton" type="button">Generate demos</button>
+          </div>
+          <div class="voice-demo-grid" id="voiceDemoGrid"></div>
+        </section>
+
+        <section class="memory-panel section-band" aria-label="Recent work memory">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Memory</p>
+              <h2>Recent work</h2>
+            </div>
+            <button class="ghost-action-button danger-button" id="clearMemoryButton" type="button">Clear</button>
+          </div>
+          <div class="memory-grid" id="memoryGrid"></div>
+        </section>
+      </section>
+    </main>
+
+    <dialog class="settings-modal" id="settingsModal">
+      <form method="dialog" class="settings-card">
+        <div class="settings-head">
+          <div>
+            <p class="eyebrow">Settings</p>
+            <h2>Gemini API keys</h2>
+          </div>
+          <button class="ghost-button" id="closeSettingsButton" type="button">Close</button>
+        </div>
+
+        <p class="hint">The .env key stays available. Save up to four extra Gemini keys and switch active keys instantly.</p>
+
+        <div class="key-list" id="keyList"></div>
+
+        <div class="key-form">
+          <input id="keyLabelInput" type="text" placeholder="Key label, e.g. Gemini key 2" />
+          <input id="apiKeyInput" type="password" placeholder="Paste Gemini API key" autocomplete="off" />
+          <button class="secondary-button" id="saveKeyButton" type="button">Save key</button>
+        </div>
+
+        <div class="settings-divider"></div>
+
+        <div class="settings-head compact-settings-head">
+          <div>
+            <p class="eyebrow">Stock media</p>
+            <h2>Pexels and Pixabay keys</h2>
+          </div>
+        </div>
+
+        <div class="stock-key-grid">
+          <section class="stock-key-panel">
+            <div class="timeline-export-head">
+              <div>
+                <p class="eyebrow">Pexels</p>
+                <h3>Video search key</h3>
+              </div>
+            </div>
+            <div class="key-list compact-key-list" id="pexelsKeyList"></div>
+            <div class="key-form">
+              <input id="pexelsKeyLabelInput" type="text" placeholder="Pexels key label" />
+              <input id="pexelsApiKeyInput" type="password" placeholder="Paste Pexels API key" autocomplete="off" />
+              <button class="secondary-button" id="savePexelsKeyButton" type="button">Save Pexels</button>
+            </div>
+          </section>
+          <section class="stock-key-panel">
+            <div class="timeline-export-head">
+              <div>
+                <p class="eyebrow">Pixabay</p>
+                <h3>Video search key</h3>
+              </div>
+            </div>
+            <div class="key-list compact-key-list" id="pixabayKeyList"></div>
+            <div class="key-form">
+              <input id="pixabayKeyLabelInput" type="text" placeholder="Pixabay key label" />
+              <input id="pixabayApiKeyInput" type="password" placeholder="Paste Pixabay API key" autocomplete="off" />
+              <button class="secondary-button" id="savePixabayKeyButton" type="button">Save Pixabay</button>
+            </div>
+          </section>
+        </div>
+
+        <p class="message" id="settingsMessage"></p>
+      </form>
+    </dialog>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

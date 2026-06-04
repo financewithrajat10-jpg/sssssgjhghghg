@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Image Reel Builder</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Reel MP4 Builder</p>
+          <h1>Image Reel Builder</h1>
+          <p>Import generated images, add optional voice audio and SRT subtitles, then export a synced MP4 for reels and shorts.</p>
+        </div>
+        <div class="status" id="ffmpegStatus">Checking FFmpeg</div>
+      </header>
+
+      <section class="workspace">
+        <section class="setup-panel">
+          <div class="field">
+            <label for="imageInput">Images</label>
+            <input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp" multiple />
+          </div>
+
+          <div class="field">
+            <label for="timelineInput">Timeline JSON</label>
+            <textarea id="timelineInput" placeholder="Paste Image timeline JSON from the first app."></textarea>
+          </div>
+
+          <div class="media-grid">
+            <div class="field">
+              <label for="audioInput">Voice audio optional</label>
+              <input id="audioInput" type="file" accept="audio/mpeg,audio/mp3,audio/wav,audio/aac,audio/mp4,audio/ogg,audio/flac" />
+              <p class="field-hint" id="audioSummary">No audio loaded.</p>
+            </div>
+
+            <div class="field">
+              <label for="srtInput">Subtitles optional</label>
+              <input id="srtInput" type="file" accept=".srt,text/plain,application/x-subrip" />
+              <p class="field-hint" id="srtSummary">No SRT loaded.</p>
+            </div>
+          </div>
+
+          <div class="toolbar">
+            <button id="applyTimelineButton" type="button">Apply timeline</button>
+            <button id="autoFiveButton" type="button">Auto 5s each</button>
+            <button id="clearButton" type="button">Clear</button>
+          </div>
+        </section>
+
+        <section class="settings-panel">
+          <div class="field">
+            <label for="formatSelect">Format</label>
+            <select id="formatSelect">
+              <option value="9:16">9:16 Shorts/Reels - 1080x1920</option>
+              <option value="16:9">16:9 YouTube - 1920x1080</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="fitSelect">Image fit</label>
+            <select id="fitSelect">
+              <option value="cover">Cover crop</option>
+              <option value="contain">Contain with black bars</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="fpsSelect">FPS</label>
+            <select id="fpsSelect">
+              <option value="24">24</option>
+              <option value="30" selected>30</option>
+              <option value="60">60</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="compatibilitySelect">Export mode</label>
+            <select id="compatibilitySelect">
+              <option value="standard" selected>Smaller MP4</option>
+              <option value="capcut-safe">CapCut safe MP4</option>
+            </select>
+          </div>
+
+          <div class="field checkbox-field">
+            <label>
+              <input id="syncAudioCheckbox" type="checkbox" checked />
+              Sync video length to audio
+            </label>
+          </div>
+
+          <div class="field checkbox-field">
+            <label>
+              <input id="burnCaptionsCheckbox" type="checkbox" />
+              Burn SRT captions into video
+            </label>
+          </div>
+
+          <div class="field">
+            <label for="captionStyleSelect">Caption style</label>
+            <select id="captionStyleSelect">
+              <option value="creator-yellow" selected>Creator yellow pop</option>
+              <option value="bold-pop">Bold white pop</option>
+              <option value="cinematic-box">Cinematic box</option>
+              <option value="horror-glow">Horror glow</option>
+              <option value="clean-lower">Clean lower third</option>
+              <option value="psych-teal">Psych teal</option>
+              <option value="relationship-soft">Relationship soft</option>
+              <option value="motivation-impact">Motivation impact</option>
+            </select>
+          </div>
+
+          <div class="caption-control-grid">
+            <div class="field">
+              <label for="captionAnimationSelect">Animation</label>
+              <select id="captionAnimationSelect">
+                <option value="auto" selected>Auto from style</option>
+                <option value="pop">Creator pop</option>
+                <option value="punch">Punch bounce</option>
+                <option value="slide-up">Slide lift</option>
+                <option value="kinetic">Kinetic snap</option>
+                <option value="glitch">Glitch hit</option>
+                <option value="fade">Smooth fade</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="captionPlacementSelect">Placement</label>
+              <select id="captionPlacementSelect">
+                <option value="auto" selected>Smart auto</option>
+                <option value="bottom">Bottom only</option>
+                <option value="center">Center all</option>
+                <option value="selected-center">Center selected</option>
+                <option value="top">Top all</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="captionCenterInput">Middle captions</label>
+            <input id="captionCenterInput" type="text" placeholder="Example: 1, 4, 12-15 or 00:00:20-00:00:24" />
+            <p class="field-hint">Used when placement is Center selected. Numbers are SRT caption numbers; ranges are seconds or timestamps.</p>
+          </div>
+
+          <div class="smart-caption-panel">
+            <div class="field checkbox-field">
+              <label>
+                <input id="smartCaptionsCheckbox" type="checkbox" />
+                Use Smart captions
+              </label>
+            </div>
+            <div class="smart-caption-grid">
+              <div class="field">
+                <label for="captionMoodSelect">Caption mood</label>
+                <select id="captionMoodSelect">
+                  <option value="auto" selected>Auto detect</option>
+                  <option value="psychology">Psychology</option>
+                  <option value="motivation">Motivation</option>
+                  <option value="horror">Horror / suspense</option>
+                  <option value="relationship">Relationship</option>
+                  <option value="documentary">Documentary</option>
+                </select>
+              </div>
+              <button id="smartCaptionButton" type="button">Design captions</button>
+            </div>
+            <p class="field-hint" id="smartCaptionSummary">Load an SRT, then let Gemma choose highlights and animations.</p>
+          </div>
+
+          <div class="caption-preview" id="captionPreview">आपकी कहानी यहीं से शुरू होती है</div>
+
+          <button class="export-button" id="exportButton" type="button">Export MP4</button>
+          <a class="download-link" id="downloadLink" download="image-reel.mp4">Download MP4</a>
+          <p class="message" id="message"></p>
+        </section>
+      </section>
+
+      <section class="timeline-panel">
+        <div class="timeline-head">
+          <div>
+            <p class="eyebrow">Timeline</p>
+            <h2>Sequence and timing</h2>
+          </div>
+          <p id="timelineSummary">No images yet</p>
+        </div>
+        <div class="image-grid" id="imageGrid"></div>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
