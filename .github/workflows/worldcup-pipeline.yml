@@ -1,0 +1,132 @@
+name: World Cup content pipeline
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "pre-tournament, prediction, or postmatch"
+        required: false
+        default: "pre-tournament"
+      date:
+        description: "Run date, YYYY-MM-DD"
+        required: false
+      match_id:
+        description: "Optional match id"
+        required: false
+      team_a:
+        description: "Team A"
+        required: false
+      team_b:
+        description: "Team B"
+        required: false
+      kickoff:
+        description: "Kickoff time or ISO timestamp"
+        required: false
+      topic:
+        description: "Specific topic or angle"
+        required: false
+      render:
+        description: "Render MP4"
+        required: false
+        default: "true"
+      upload:
+        description: "Upload MP4 and sidecars to R2"
+        required: false
+        default: "true"
+      force:
+        description: "Ignore daily limit"
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: worldcup-pipeline-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+  CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+  R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+  R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
+  PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+  PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+  WORLD_CUP_MAX_VIDEOS_PER_DAY: ${{ vars.WORLD_CUP_MAX_VIDEOS_PER_DAY || '3' }}
+  WORLD_CUP_SCHEDULE_HOURS: ${{ vars.WORLD_CUP_SCHEDULE_HOURS || '9,15,21' }}
+  WORLD_CUP_DEFAULT_LANGUAGE: ${{ vars.WORLD_CUP_DEFAULT_LANGUAGE || 'en' }}
+  WORLD_CUP_SEARCH_MODEL: ${{ vars.WORLD_CUP_SEARCH_MODEL || 'gemini-3-flash-preview' }}
+  WORLD_CUP_WRITER_MODEL: ${{ vars.WORLD_CUP_WRITER_MODEL || 'gemini-3-flash-preview' }}
+  WORLD_CUP_EVALUATOR_MODEL: ${{ vars.WORLD_CUP_EVALUATOR_MODEL || 'gemini-3-flash-preview' }}
+  WORLD_CUP_TTS_REWRITE_MODEL: ${{ vars.WORLD_CUP_TTS_REWRITE_MODEL || 'gemini-3-flash-preview' }}
+  WORLD_CUP_TTS_MODEL: ${{ vars.WORLD_CUP_TTS_MODEL || 'gemini-3.1-flash-tts-preview' }}
+  WORLD_CUP_AUDIO_SRT_MODEL: ${{ vars.WORLD_CUP_AUDIO_SRT_MODEL || 'gemini-2.5-flash' }}
+  WORLD_CUP_TOPICS: ${{ vars.WORLD_CUP_TOPICS }}
+  INPUT_MODE: ${{ github.event.inputs.mode || 'pre-tournament' }}
+  INPUT_DATE: ${{ github.event.inputs.date || '' }}
+  INPUT_MATCH_ID: ${{ github.event.inputs.match_id || '' }}
+  INPUT_TEAM_A: ${{ github.event.inputs.team_a || '' }}
+  INPUT_TEAM_B: ${{ github.event.inputs.team_b || '' }}
+  INPUT_KICKOFF: ${{ github.event.inputs.kickoff || '' }}
+  INPUT_TOPIC: ${{ github.event.inputs.topic || '' }}
+  INPUT_RENDER: ${{ github.event.inputs.render || 'true' }}
+  INPUT_UPLOAD: ${{ github.event.inputs.upload || 'true' }}
+  INPUT_FORCE: ${{ github.event.inputs.force || 'false' }}
+
+jobs:
+  generate:
+    name: Generate World Cup short
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check server.mjs
+          node --check public/app.js
+          node --check worldcup/pipeline.mjs
+          node --check worldcup/cli.mjs
+
+      - name: Run pipeline
+        run: >
+          node worldcup/cli.mjs
+          --scheduled
+          --mode "$INPUT_MODE"
+          --date "$INPUT_DATE"
+          --match-id "$INPUT_MATCH_ID"
+          --team-a "$INPUT_TEAM_A"
+          --team-b "$INPUT_TEAM_B"
+          --kickoff "$INPUT_KICKOFF"
+          --topic "$INPUT_TOPIC"
+          --render "$INPUT_RENDER"
+          --upload "$INPUT_UPLOAD"
+          --force "$INPUT_FORCE"
+
+      - name: Upload debug artifacts
+        uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: worldcup-run-artifacts
+          path: |
+            .tmp-worldcup/index.json
+            .tmp-worldcup/runs/**
+          if-no-files-found: ignore
+          retention-days: 7

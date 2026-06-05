@@ -92,6 +92,53 @@ Use the Storyboard prompts section after writing or pasting your story.
 - `Render MP4` uses FFmpeg to download, crop, trim/loop, and combine the selected clips into a 1080x1920 H.264 MP4. Audio and burned animated ASS subtitles are optional.
 - Export pack includes `stock-video-timeline.json`, `stock-video-plan.json`, `stock-smart-captions.json`, and stock attribution notes when they exist.
 
+## World Cup automated short-video pipeline
+
+The app now includes a separate `World Cup` dashboard and a standalone CLI subsystem in `worldcup/`.
+
+- Local dashboard routes:
+  - `GET /api/worldcup/runs`
+  - `GET /api/worldcup/runs/:id`
+  - `POST /api/worldcup/generate`
+  - `POST /api/worldcup/render`
+  - `POST /api/worldcup/upload`
+  - `GET /api/worldcup/assets/:id?file=mp4|srt|script|evidence|visuals|attribution|rights|renderLog|audio`
+- CLI:
+
+```powershell
+npm run worldcup -- --mode prediction --team-a "USA" --team-b "Brazil" --topic "why this match has trap-game energy" --render true --upload false
+```
+
+- Dry local test without Gemini calls:
+
+```powershell
+npm run worldcup:dry
+```
+
+Pipeline stages:
+
+- Builds a compact evidence pack from search grounding, commentary/event extraction, and fallback match context.
+- Writes three styles: `serious_analyst`, `funny_fan_analyst`, and `dramatic_storyteller`.
+- Judges the three scripts and rewrites the winner into a Gemini TTS-ready screenplay with light tags.
+- Generates one Gemini TTS take, creates audio-aware SRT when audio is available, and falls back to script timing when needed.
+- Resolves safe visuals from Wikimedia/Wikidata, Pexels/Pixabay, and local tactical/card fallbacks.
+- Renders vertical 1080x1920 H.264/AAC MP4 with creator-yellow slide-lift captions.
+- Stores local run files under `.tmp-worldcup/`, which is ignored by Git.
+
+GitHub Actions:
+
+- `.github/workflows/worldcup-pipeline.yml` runs hourly and can also be triggered manually.
+- The hourly workflow only generates during `WORLD_CUP_SCHEDULE_HOURS` UTC, default `9,15,21`, unless manually triggered with `force=true`.
+- Add these secrets for live generation and R2 upload:
+  - `GEMINI_API_KEY`
+  - `CLOUDFLARE_ACCOUNT_ID`
+  - `CLOUDFLARE_R2_ACCESS_KEY_ID`
+  - `CLOUDFLARE_R2_SECRET_ACCESS_KEY`
+  - `R2_BUCKET_NAME`
+- Add repository variable `R2_PUBLIC_BASE_URL` if your bucket has a public domain.
+- Optional secrets: `PEXELS_API_KEY`, `PIXABAY_API_KEY`.
+- Output MP4s and sidecars upload to R2 under `worldcup/YYYY-MM-DD/team-a-vs-team-b/`.
+
 ## Voice demos and MP3
 
 - `Generate demos` creates a short preview for every Gemini voice in the app.

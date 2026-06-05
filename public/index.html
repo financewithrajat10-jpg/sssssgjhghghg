@@ -27,6 +27,7 @@
         <button class="tab-button" type="button" data-tab-target="voicePane">Voice</button>
         <button class="tab-button" type="button" data-tab-target="voicePane" data-tab-action="rewrite">Rewrite</button>
         <button class="tab-button" type="button" data-tab-target="storyboardPane">Media</button>
+        <button class="tab-button" type="button" data-tab-target="worldCupPane">World Cup</button>
         <button class="tab-button" type="button" data-tab-target="memoryPane">Library</button>
         <button class="tab-button" type="button" data-tab-action="settings">Settings</button>
       </nav>
@@ -51,6 +52,11 @@
           <span>04</span>
           <strong>Export</strong>
           <small>Pack and memory</small>
+        </div>
+        <div class="workflow-step" data-workflow-step="worldCupPane">
+          <span>WC</span>
+          <strong>World Cup</strong>
+          <small>Auto shorts</small>
         </div>
       </section>
 
@@ -563,6 +569,82 @@
           </div>
           <div class="memory-grid" id="memoryGrid"></div>
         </section>
+      </section>
+
+      <section class="worldcup-panel section-band tab-panel" id="worldCupPane" data-tab-panel hidden aria-label="World Cup automated short-video pipeline">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">World Cup Chaos Desk</p>
+            <h2>Automated football shorts</h2>
+          </div>
+          <div class="button-row">
+            <button class="ghost-action-button" id="worldCupRefreshButton" type="button">Refresh</button>
+            <button class="secondary-button" id="worldCupGenerateButton" type="button">Generate run</button>
+          </div>
+        </div>
+
+        <div class="worldcup-layout">
+          <section class="worldcup-controls" aria-label="World Cup generation controls">
+            <div class="worldcup-status" id="worldCupStatus">World Cup pipeline is ready for drafts.</div>
+
+            <div class="script-control-grid">
+              <div class="field-group">
+                <label for="worldCupMode">Video type</label>
+                <select id="worldCupMode">
+                  <option value="pre-tournament">Pre-tournament</option>
+                  <option value="prediction" selected>Prediction</option>
+                  <option value="postmatch">Post-match</option>
+                </select>
+              </div>
+              <div class="field-group">
+                <label for="worldCupDate">Date</label>
+                <input id="worldCupDate" type="date" />
+              </div>
+              <div class="field-group">
+                <label for="worldCupTeamA">Team A</label>
+                <input id="worldCupTeamA" type="text" placeholder="Example: USA" />
+              </div>
+              <div class="field-group">
+                <label for="worldCupTeamB">Team B</label>
+                <input id="worldCupTeamB" type="text" placeholder="Example: Brazil" />
+              </div>
+              <div class="field-group">
+                <label for="worldCupKickoff">Kickoff</label>
+                <input id="worldCupKickoff" type="text" placeholder="Example: 2026-06-11T20:00:00Z" />
+              </div>
+              <div class="field-group">
+                <label for="worldCupDuration">Target seconds</label>
+                <input id="worldCupDuration" type="number" min="25" max="65" step="1" value="48" />
+              </div>
+            </div>
+
+            <div class="field-group wide-field">
+              <label for="worldCupTopic">Topic or angle</label>
+              <textarea class="direction-box script-topic-box" id="worldCupTopic" placeholder="Example: why this is a trap match even if the favorite looks obvious"></textarea>
+            </div>
+
+            <div class="worldcup-option-row">
+              <label class="checkbox-row">
+                <input id="worldCupRender" type="checkbox" checked />
+                Render MP4
+              </label>
+              <label class="checkbox-row">
+                <input id="worldCupUpload" type="checkbox" />
+                Upload to R2
+              </label>
+              <label class="checkbox-row">
+                <input id="worldCupOffline" type="checkbox" />
+                Offline draft
+              </label>
+            </div>
+
+            <p class="hint">This uses search-grounded evidence, three script styles, a judge pass, TTS rewrite, audio-aware SRT, safe visual fallbacks, FFmpeg render, and optional R2 upload.</p>
+          </section>
+
+          <section class="worldcup-library" aria-label="Generated World Cup videos">
+            <div class="worldcup-run-grid" id="worldCupRunGrid"></div>
+          </section>
+        </div>
       </section>
     </main>
 

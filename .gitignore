@@ -8,5 +8,6 @@ server.log
 debug.log
 .tmp-audio/
 .tmp-stock-video/
+.tmp-worldcup/
 image-reel-builder/.tmp-binary-payload.json
 image-reel-builder/.tmp-renders/

@@ -5,6 +5,15 @@ import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import {
+  generateWorldCupRun,
+  listWorldCupRuns,
+  readWorldCupRun,
+  renderWorldCupRun,
+  resolveWorldCupAsset,
+  uploadWorldCupRun,
+  worldCupConfigSummary,
+} from "./worldcup/pipeline.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
@@ -1146,6 +1155,17 @@ function sendStockMp4(res, result) {
     "X-Stock-Clips": String(result.clipCount || 0),
   });
   res.end(result.video);
+}
+
+async function sendWorldCupAsset(res, asset) {
+  const file = await fs.readFile(asset.path);
+  res.writeHead(200, {
+    "Content-Type": asset.mime,
+    "Content-Disposition": `attachment; filename="${asset.filename || "worldcup-asset"}"`,
+    "Content-Length": file.length,
+    "Cache-Control": "no-store",
+  });
+  res.end(file);
 }
 
 function sendError(res, error, fallbackMessage = "Something went wrong.") {
@@ -5193,6 +5213,9 @@ async function generateStoryboard(body) {
 }
 
 async function handleApi(req, res) {
+  const parsedUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  const pathname = parsedUrl.pathname;
+
   if (req.method === "GET" && req.url === "/api/config") {
     const mp3Ready = await hasFfmpeg();
     const geminiStore = await loadGeminiKeyStore();
@@ -5236,7 +5259,63 @@ async function handleApi(req, res) {
       scriptRewriteModel: SCRIPT_REWRITE_MODEL,
       scriptStudioModel: SCRIPT_STUDIO_WRITER_MODEL,
       scriptStudioResearchModel: SCRIPT_STUDIO_RESEARCH_MODEL,
+      worldCup: await worldCupConfigSummary(),
     });
+  }
+
+  if (req.method === "GET" && pathname === "/api/worldcup/runs") {
+    try {
+      return sendJson(res, 200, await listWorldCupRuns());
+    } catch (error) {
+      return sendError(res, error, "Unable to load World Cup runs.");
+    }
+  }
+
+  if (req.method === "GET" && pathname.startsWith("/api/worldcup/runs/")) {
+    try {
+      const id = decodeURIComponent(pathname.slice("/api/worldcup/runs/".length));
+      return sendJson(res, 200, await readWorldCupRun(id));
+    } catch (error) {
+      return sendError(res, error, "Unable to load World Cup run.");
+    }
+  }
+
+  if (req.method === "GET" && pathname.startsWith("/api/worldcup/assets/")) {
+    try {
+      const parts = pathname.slice("/api/worldcup/assets/".length).split("/").filter(Boolean);
+      const id = decodeURIComponent(parts[0] || "");
+      const fileKey = decodeURIComponent(parts[1] || parsedUrl.searchParams.get("file") || "mp4");
+      return await sendWorldCupAsset(res, await resolveWorldCupAsset(id, fileKey));
+    } catch (error) {
+      return sendError(res, error, "Unable to load World Cup asset.");
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/worldcup/generate") {
+    try {
+      const body = await readRequestJson(req);
+      return sendJson(res, 200, await generateWorldCupRun(body));
+    } catch (error) {
+      return sendError(res, error, "Unable to generate World Cup short.");
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/worldcup/render") {
+    try {
+      const body = await readRequestJson(req);
+      return sendJson(res, 200, await renderWorldCupRun(body.id, body));
+    } catch (error) {
+      return sendError(res, error, "Unable to render World Cup short.");
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/worldcup/upload") {
+    try {
+      const body = await readRequestJson(req);
+      return sendJson(res, 200, await uploadWorldCupRun(body.id));
+    } catch (error) {
+      return sendError(res, error, "Unable to upload World Cup short.");
+    }
   }
 
   if (req.method === "GET" && req.url === "/api/gemini-keys") {

@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "dev": "node server.mjs"
+    "dev": "node server.mjs",
+    "worldcup": "node worldcup/cli.mjs",
+    "worldcup:dry": "node worldcup/cli.mjs --mode pre-tournament --topic \"World Cup chaos desk dry run\" --offline true --render false --upload false"
   },
   "engines": {
     "node": ">=18"

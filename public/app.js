@@ -102,6 +102,21 @@ const elements = {
   scriptCopyButton: document.querySelector("#scriptCopyButton"),
   scriptStudioResult: document.querySelector("#scriptStudioResult"),
   scriptSourceList: document.querySelector("#scriptSourceList"),
+  worldCupPane: document.querySelector("#worldCupPane"),
+  worldCupRefreshButton: document.querySelector("#worldCupRefreshButton"),
+  worldCupGenerateButton: document.querySelector("#worldCupGenerateButton"),
+  worldCupStatus: document.querySelector("#worldCupStatus"),
+  worldCupMode: document.querySelector("#worldCupMode"),
+  worldCupDate: document.querySelector("#worldCupDate"),
+  worldCupTeamA: document.querySelector("#worldCupTeamA"),
+  worldCupTeamB: document.querySelector("#worldCupTeamB"),
+  worldCupKickoff: document.querySelector("#worldCupKickoff"),
+  worldCupDuration: document.querySelector("#worldCupDuration"),
+  worldCupTopic: document.querySelector("#worldCupTopic"),
+  worldCupRender: document.querySelector("#worldCupRender"),
+  worldCupUpload: document.querySelector("#worldCupUpload"),
+  worldCupOffline: document.querySelector("#worldCupOffline"),
+  worldCupRunGrid: document.querySelector("#worldCupRunGrid"),
 };
 
 const apiBaseUrl = String(window.CONTENT_STUDIO_API_BASE_URL || "").replace(/\/+$/, "");
@@ -123,6 +138,7 @@ let lastStoryboardPrompts = [];
 let lastStockVideoPlan = null;
 let lastStockVideoTimeline = null;
 let lastStockSmartCaptions = null;
+let lastWorldCupRuns = [];
 let lastTimelineJson = "";
 let lastSrtText = "";
 let lastAudioCacheKey = "";
@@ -138,6 +154,7 @@ let config = {
   mp3Ready: false,
   stockVideoReady: false,
   stockKeys: null,
+  worldCup: null,
   imageMoods: [],
   scriptTemplates: [],
   scriptContentTypes: [],
@@ -749,6 +766,8 @@ async function loadConfig() {
     populateScriptStudioSelects();
     refreshProviderControls();
     renderImageMoods(config.imageMoods || []);
+    updateWorldCupStatus();
+    loadWorldCupRuns();
     elements.copyAllPromptsButton.hidden = true;
   } catch {
     elements.statusPill.textContent = "Server unavailable";
@@ -2341,6 +2360,199 @@ async function renderStockVideo() {
   }
 }
 
+function worldCupAssetUrl(run, fileKey) {
+  if (fileKey === "mp4" && run?.r2?.publicUrl) {
+    return run.r2.publicUrl;
+  }
+  return apiUrl(`/api/worldcup/assets/${encodeURIComponent(run.id)}?file=${encodeURIComponent(fileKey)}`);
+}
+
+function updateWorldCupStatus() {
+  if (!elements.worldCupStatus) {
+    return;
+  }
+  const worldCup = config.worldCup || {};
+  const checks = [
+    worldCup.ready ? "Gemini ready" : "Gemini key missing",
+    worldCup.ffmpegReady ? "FFmpeg ready" : "FFmpeg missing",
+    worldCup.stockReady ? "stock keys ready" : "fallback visuals",
+    worldCup.r2Ready ? "R2 ready" : "R2 not configured",
+  ];
+  const schedule = Array.isArray(worldCup.scheduleHoursUtc) ? ` Schedule UTC: ${worldCup.scheduleHoursUtc.join(", ")}.` : "";
+  elements.worldCupStatus.textContent = `Pipeline: ${checks.join(" | ")}. Models: writer ${worldCup.models?.writer || "default"}, TTS ${worldCup.models?.tts || "default"}.${schedule}`;
+  elements.worldCupStatus.classList.toggle("warning", !worldCup.ready || !worldCup.ffmpegReady);
+}
+
+function worldCupRunActions(run) {
+  const actions = [];
+  if (!run.files?.mp4) {
+    actions.push(`<button class="ghost-action-button" type="button" data-worldcup-action="render" data-run-id="${escapeHtml(run.id)}">Render</button>`);
+  }
+  actions.push(`<button class="ghost-action-button" type="button" data-worldcup-action="upload" data-run-id="${escapeHtml(run.id)}">Upload R2</button>`);
+  return actions.join("");
+}
+
+function renderWorldCupRuns(index = {}) {
+  lastWorldCupRuns = Array.isArray(index.runs) ? index.runs : [];
+  if (!elements.worldCupRunGrid) {
+    return;
+  }
+  if (!lastWorldCupRuns.length) {
+    elements.worldCupRunGrid.innerHTML = `
+      <p class="empty-memory">No World Cup runs yet. Generate a prediction, post-match, or pre-tournament short to start the desk.</p>
+    `;
+    return;
+  }
+
+  elements.worldCupRunGrid.innerHTML = lastWorldCupRuns
+    .map((run) => {
+      const teams = [run.match?.teamA, run.match?.teamB].filter(Boolean).join(" vs ");
+      const label = teams || run.topic || "World Cup topic";
+      const warnings = (run.warnings || []).length
+        ? `<div class="worldcup-warning-list">${run.warnings.map((warning) => `<span>${escapeHtml(warning)}</span>`).join("")}</div>`
+        : "";
+      const mp4Link = run.files?.mp4 || run.r2?.publicUrl ? `<a href="${escapeHtml(worldCupAssetUrl(run, "mp4"))}" target="_blank" rel="noreferrer">MP4</a>` : "";
+      const sidecarLinks = [
+        run.files?.srt ? `<a href="${escapeHtml(worldCupAssetUrl(run, "srt"))}" target="_blank" rel="noreferrer">SRT</a>` : "",
+        run.files?.script ? `<a href="${escapeHtml(worldCupAssetUrl(run, "script"))}" target="_blank" rel="noreferrer">Script</a>` : "",
+        run.files?.evidence ? `<a href="${escapeHtml(worldCupAssetUrl(run, "evidence"))}" target="_blank" rel="noreferrer">Evidence</a>` : "",
+        run.files?.visuals ? `<a href="${escapeHtml(worldCupAssetUrl(run, "visuals"))}" target="_blank" rel="noreferrer">Visuals</a>` : "",
+        run.files?.attribution ? `<a href="${escapeHtml(worldCupAssetUrl(run, "attribution"))}" target="_blank" rel="noreferrer">Attribution</a>` : "",
+      ]
+        .filter(Boolean)
+        .join("");
+      return `
+        <article class="worldcup-run-card">
+          <div class="worldcup-card-head">
+            <div>
+              <p class="eyebrow">${escapeHtml(run.type || "worldcup")} | ${escapeHtml(run.status || "draft")}</p>
+              <h3>${escapeHtml(label)}</h3>
+            </div>
+            <span>${escapeHtml(run.voice || "voice pending")}</span>
+          </div>
+          <p>${escapeHtml(run.scriptPreview || "Script preview will appear after generation.")}</p>
+          <div class="worldcup-meta-row">
+            <span>${escapeHtml(run.selectedStyle || "style pending")}</span>
+            <span>${Number(run.durationSeconds || 0).toFixed(1)}s</span>
+            <span>${Number(run.srtSegments || 0)} captions</span>
+          </div>
+          <div class="worldcup-link-row">${mp4Link}${sidecarLinks}</div>
+          ${warnings}
+          <div class="worldcup-action-row">${worldCupRunActions(run)}</div>
+        </article>
+      `;
+    })
+    .join("");
+
+  for (const button of elements.worldCupRunGrid.querySelectorAll("button[data-worldcup-action]")) {
+    button.addEventListener("click", () => {
+      const runId = button.dataset.runId;
+      const action = button.dataset.worldcupAction;
+      if (action === "render") {
+        renderWorldCupRunFromUi(runId);
+      }
+      if (action === "upload") {
+        uploadWorldCupRunFromUi(runId);
+      }
+    });
+  }
+}
+
+async function loadWorldCupRuns() {
+  if (!elements.worldCupRunGrid) {
+    return;
+  }
+  try {
+    const response = await apiFetch("/api/worldcup/runs");
+    const result = await response.json();
+    if (!response.ok) {
+      throwApiError(result, "Unable to load World Cup runs.");
+    }
+    renderWorldCupRuns(result);
+  } catch (error) {
+    showApiError(error.payload || error, error.message || "Unable to load World Cup runs.");
+  }
+}
+
+async function generateWorldCupRunFromUi() {
+  if (!elements.worldCupGenerateButton) {
+    return;
+  }
+  elements.worldCupGenerateButton.disabled = true;
+  elements.worldCupGenerateButton.textContent = elements.worldCupRender.checked ? "Generating + rendering..." : "Generating...";
+  if (elements.worldCupStatus) {
+    elements.worldCupStatus.textContent = "Collecting evidence, writing three scripts, judging, preparing TTS, captions, and visuals.";
+  }
+  try {
+    const response = await apiFetch("/api/worldcup/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: elements.worldCupMode.value,
+        date: elements.worldCupDate.value,
+        teamA: elements.worldCupTeamA.value,
+        teamB: elements.worldCupTeamB.value,
+        kickoff: elements.worldCupKickoff.value,
+        durationSeconds: elements.worldCupDuration.value,
+        topic: elements.worldCupTopic.value,
+        render: elements.worldCupRender.checked,
+        upload: elements.worldCupUpload.checked,
+        offline: elements.worldCupOffline.checked,
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throwApiError(result, "Unable to generate World Cup short.");
+    }
+    setMessage(`World Cup run ready: ${result.topic || result.id}`);
+    await loadWorldCupRuns();
+  } catch (error) {
+    showApiError(error.payload || error, error.message || "Unable to generate World Cup short.");
+  } finally {
+    elements.worldCupGenerateButton.disabled = false;
+    elements.worldCupGenerateButton.textContent = "Generate run";
+    updateWorldCupStatus();
+  }
+}
+
+async function renderWorldCupRunFromUi(runId) {
+  setMessage("Rendering World Cup MP4 with captions and audio.");
+  try {
+    const response = await apiFetch("/api/worldcup/render", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: runId, burnSubtitles: true }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throwApiError(result, "Unable to render World Cup short.");
+    }
+    setMessage(`Rendered World Cup MP4: ${result.topic || result.id}`);
+    await loadWorldCupRuns();
+  } catch (error) {
+    showApiError(error.payload || error, error.message || "Unable to render World Cup short.");
+  }
+}
+
+async function uploadWorldCupRunFromUi(runId) {
+  setMessage("Uploading World Cup run and sidecars to R2.");
+  try {
+    const response = await apiFetch("/api/worldcup/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: runId }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throwApiError(result, "Unable to upload World Cup short.");
+    }
+    setMessage(result.r2?.publicUrl ? `Uploaded to R2: ${result.r2.publicUrl}` : "World Cup sidecars uploaded to R2.");
+    await loadWorldCupRuns();
+  } catch (error) {
+    showApiError(error.payload || error, error.message || "Unable to upload World Cup short.");
+  }
+}
+
 async function generateVoiceDemos() {
   const providerConfig = currentProviderConfig();
   const voices = providerConfig.voices || [];
@@ -3045,6 +3257,8 @@ elements.exportPackButton.addEventListener("click", exportPack);
 elements.scriptGenerateButton.addEventListener("click", generateScriptStudio);
 elements.scriptUseButton.addEventListener("click", useScriptStudioScript);
 elements.scriptCopyButton.addEventListener("click", copyScriptStudioScript);
+elements.worldCupGenerateButton.addEventListener("click", generateWorldCupRunFromUi);
+elements.worldCupRefreshButton.addEventListener("click", loadWorldCupRuns);
 elements.voiceDemosButton.addEventListener("click", generateVoiceDemos);
 elements.clearMemoryButton.addEventListener("click", async () => {
   await clearMemoryItems();
@@ -3064,6 +3278,9 @@ for (const button of document.querySelectorAll(".tab-button")) {
 }
 
 updateCharCount();
+if (elements.worldCupDate && !elements.worldCupDate.value) {
+  elements.worldCupDate.value = new Date().toISOString().slice(0, 10);
+}
 updateWorkflowStrip("scriptStudioPane");
 updateStoryboardModeHint();
 loadConfig();
