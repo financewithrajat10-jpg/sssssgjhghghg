@@ -2376,7 +2376,8 @@ function updateWorldCupStatus() {
     worldCup.ready ? "Gemini ready" : "Gemini key missing",
     worldCup.ffmpegReady ? "FFmpeg ready" : "FFmpeg missing",
     worldCup.stockReady ? "stock keys ready" : "fallback visuals",
-    worldCup.r2Ready ? "R2 ready" : "R2 not configured",
+    worldCup.driveReady ? "Drive ready" : "Drive not configured",
+    worldCup.r2Ready ? "R2 fallback ready" : "R2 fallback off",
   ];
   const schedule = Array.isArray(worldCup.scheduleHoursUtc) ? ` Schedule UTC: ${worldCup.scheduleHoursUtc.join(", ")}.` : "";
   elements.worldCupStatus.textContent = `Pipeline: ${checks.join(" | ")}. Models: writer ${worldCup.models?.writer || "default"}, TTS ${worldCup.models?.tts || "default"}.${schedule}`;
@@ -2388,7 +2389,7 @@ function worldCupRunActions(run) {
   if (!run.files?.mp4) {
     actions.push(`<button class="ghost-action-button" type="button" data-worldcup-action="render" data-run-id="${escapeHtml(run.id)}">Render</button>`);
   }
-  actions.push(`<button class="ghost-action-button" type="button" data-worldcup-action="upload" data-run-id="${escapeHtml(run.id)}">Upload R2</button>`);
+  actions.push(`<button class="ghost-action-button" type="button" data-worldcup-action="upload" data-run-id="${escapeHtml(run.id)}">Upload Drive</button>`);
   return actions.join("");
 }
 
@@ -2412,7 +2413,9 @@ function renderWorldCupRuns(index = {}) {
         ? `<div class="worldcup-warning-list">${run.warnings.map((warning) => `<span>${escapeHtml(warning)}</span>`).join("")}</div>`
         : "";
       const mp4Link = run.files?.mp4 || run.r2?.publicUrl ? `<a href="${escapeHtml(worldCupAssetUrl(run, "mp4"))}" target="_blank" rel="noreferrer">MP4</a>` : "";
+      const driveLink = run.drive?.folderUrl ? `<a href="${escapeHtml(run.drive.folderUrl)}" target="_blank" rel="noreferrer">Drive folder</a>` : "";
       const sidecarLinks = [
+        driveLink,
         run.files?.srt ? `<a href="${escapeHtml(worldCupAssetUrl(run, "srt"))}" target="_blank" rel="noreferrer">SRT</a>` : "",
         run.files?.script ? `<a href="${escapeHtml(worldCupAssetUrl(run, "script"))}" target="_blank" rel="noreferrer">Script</a>` : "",
         run.files?.evidence ? `<a href="${escapeHtml(worldCupAssetUrl(run, "evidence"))}" target="_blank" rel="noreferrer">Evidence</a>` : "",
@@ -2497,6 +2500,7 @@ async function generateWorldCupRunFromUi() {
         topic: elements.worldCupTopic.value,
         render: elements.worldCupRender.checked,
         upload: elements.worldCupUpload.checked,
+        uploadTarget: "google-drive",
         offline: elements.worldCupOffline.checked,
       }),
     });
@@ -2535,18 +2539,18 @@ async function renderWorldCupRunFromUi(runId) {
 }
 
 async function uploadWorldCupRunFromUi(runId) {
-  setMessage("Uploading World Cup run and sidecars to R2.");
+  setMessage("Uploading World Cup run and sidecars to Google Drive.");
   try {
     const response = await apiFetch("/api/worldcup/upload", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: runId }),
+      body: JSON.stringify({ id: runId, destination: "google-drive" }),
     });
     const result = await response.json();
     if (!response.ok) {
       throwApiError(result, "Unable to upload World Cup short.");
     }
-    setMessage(result.r2?.publicUrl ? `Uploaded to R2: ${result.r2.publicUrl}` : "World Cup sidecars uploaded to R2.");
+    setMessage(result.drive?.folderUrl ? `Uploaded to Google Drive: ${result.drive.folderUrl}` : "World Cup files uploaded.");
     await loadWorldCupRuns();
   } catch (error) {
     showApiError(error.payload || error, error.message || "Unable to upload World Cup short.");

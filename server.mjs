@@ -5312,7 +5312,7 @@ async function handleApi(req, res) {
   if (req.method === "POST" && pathname === "/api/worldcup/upload") {
     try {
       const body = await readRequestJson(req);
-      return sendJson(res, 200, await uploadWorldCupRun(body.id));
+      return sendJson(res, 200, await uploadWorldCupRun(body.id, body));
     } catch (error) {
       return sendError(res, error, "Unable to upload World Cup short.");
     }

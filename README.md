@@ -123,21 +123,36 @@ Pipeline stages:
 - Generates one Gemini TTS take, creates audio-aware SRT when audio is available, and falls back to script timing when needed.
 - Resolves safe visuals from Wikimedia/Wikidata, Pexels/Pixabay, and local tactical/card fallbacks.
 - Renders vertical 1080x1920 H.264/AAC MP4 with creator-yellow slide-lift captions.
+- Uploads MP4 and sidecars to Google Drive by default, or R2 when `WORLD_CUP_UPLOAD_TARGET=r2`.
 - Stores local run files under `.tmp-worldcup/`, which is ignored by Git.
+
+Default World Cup models:
+
+- Search/evidence grounding: `gemini-2.5-pro`, falling back to `gemini-3.5-flash` then `gemini-2.5-flash` if quota or temporary demand blocks the first model.
+- Script writing and TTS rewrite: `gemini-3.5-flash`
+- Script evaluation: `gemini-3-flash-preview`
+- Audio-aware SRT: `gemini-2.5-flash`
+- TTS audio: `gemini-3.1-flash-tts-preview`
 
 GitHub Actions:
 
 - `.github/workflows/worldcup-pipeline.yml` runs hourly and can also be triggered manually.
 - The hourly workflow only generates during `WORLD_CUP_SCHEDULE_HOURS` UTC, default `9,15,21`, unless manually triggered with `force=true`.
-- Add these secrets for live generation and R2 upload:
+- Add these secrets for live generation and Google Drive upload:
   - `GEMINI_API_KEY`
+  - `GOOGLE_SERVICE_ACCOUNT_JSON` or `GOOGLE_SERVICE_ACCOUNT_BASE64`
+- Add this repository variable:
+  - `GOOGLE_DRIVE_FOLDER_ID`
+- Share that Drive folder with the service account `client_email`, giving it Editor access.
+- Optional variable: `GOOGLE_DRIVE_MAKE_PUBLIC=false`. Set to `true` only if you want generated files shared by link.
+- Optional R2 fallback secrets:
   - `CLOUDFLARE_ACCOUNT_ID`
   - `CLOUDFLARE_R2_ACCESS_KEY_ID`
   - `CLOUDFLARE_R2_SECRET_ACCESS_KEY`
   - `R2_BUCKET_NAME`
-- Add repository variable `R2_PUBLIC_BASE_URL` if your bucket has a public domain.
+- Add repository variable `R2_PUBLIC_BASE_URL` only if using R2 with a public domain.
 - Optional secrets: `PEXELS_API_KEY`, `PIXABAY_API_KEY`.
-- Output MP4s and sidecars upload to R2 under `worldcup/YYYY-MM-DD/team-a-vs-team-b/`.
+- Google Drive output is saved under `worldcup/YYYY-MM-DD/team-a-vs-team-b/` inside the configured folder.
 
 ## Voice demos and MP3
 

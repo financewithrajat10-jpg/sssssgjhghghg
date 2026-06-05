@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { execFile } from "node:child_process";
-import { createHash, createHmac, randomUUID } from "node:crypto";
+import { createHash, createHmac, createSign, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -21,14 +21,19 @@ const VIDEO_HEIGHT = 1920;
 const VIDEO_FPS = 30;
 const MAX_SAVED_KEYS = 4;
 const DEFAULT_LANGUAGE = process.env.WORLD_CUP_DEFAULT_LANGUAGE || "en";
-const SEARCH_MODEL = process.env.WORLD_CUP_SEARCH_MODEL || process.env.WORLD_CUP_RESEARCH_MODEL || "gemini-3-flash-preview";
-const WRITER_MODEL = process.env.WORLD_CUP_WRITER_MODEL || "gemini-3-flash-preview";
+const SEARCH_MODEL = process.env.WORLD_CUP_SEARCH_MODEL || process.env.WORLD_CUP_RESEARCH_MODEL || "gemini-2.5-pro";
+const SEARCH_FALLBACK_MODELS = String(process.env.WORLD_CUP_SEARCH_FALLBACK_MODELS || "gemini-3.5-flash,gemini-2.5-flash")
+  .split(",")
+  .map((model) => model.trim())
+  .filter(Boolean);
+const WRITER_MODEL = process.env.WORLD_CUP_WRITER_MODEL || "gemini-3.5-flash";
 const EVALUATOR_MODEL = process.env.WORLD_CUP_EVALUATOR_MODEL || "gemini-3-flash-preview";
-const TTS_REWRITE_MODEL = process.env.WORLD_CUP_TTS_REWRITE_MODEL || "gemini-3-flash-preview";
+const TTS_REWRITE_MODEL = process.env.WORLD_CUP_TTS_REWRITE_MODEL || WRITER_MODEL;
 const TTS_MODEL = process.env.WORLD_CUP_TTS_MODEL || "gemini-3.1-flash-tts-preview";
 const AUDIO_SRT_MODEL = process.env.WORLD_CUP_AUDIO_SRT_MODEL || "gemini-2.5-flash";
 const MAX_VIDEOS_PER_DAY = Number(process.env.WORLD_CUP_MAX_VIDEOS_PER_DAY || 3);
 const DEFAULT_SCHEDULE_HOURS = process.env.WORLD_CUP_SCHEDULE_HOURS || "9,15,21";
+const DEFAULT_UPLOAD_TARGET = process.env.WORLD_CUP_UPLOAD_TARGET || "google-drive";
 const STOCK_VIDEO_HOSTS = new Set([
   "player.vimeo.com",
   "vod-progressive.akamaized.net",
@@ -355,6 +360,32 @@ async function requestGeminiJson({ keyInfo, model, prompt, temperature = 0.6, se
     sources: extractGroundingSources(data?.candidates?.[0]?.groundingMetadata),
     groundingMetadata: data?.candidates?.[0]?.groundingMetadata || null,
   };
+}
+
+async function requestGeminiJsonWithFallbacks({ keyInfo, primaryModel, fallbackModels = [], prompt, temperature = 0.6, search = false }) {
+  const models = [primaryModel, ...fallbackModels].filter(Boolean).filter((model, index, list) => list.indexOf(model) === index);
+  const errors = [];
+  for (const model of models) {
+    try {
+      const result = await requestGeminiJson({ keyInfo, model, prompt, temperature, search });
+      return { ...result, model };
+    } catch (error) {
+      errors.push(`${model}: ${error.message}`);
+      const retryable =
+        error.code === "QUOTA_OR_RATE_LIMIT" ||
+        error.code === "GEMINI_SERVER_ERROR" ||
+        error.code === "NETWORK_OR_SERVER_UNREACHABLE" ||
+        /quota|rate|high demand|overloaded|temporar/i.test(error.message || "");
+      if (!retryable) {
+        throw error;
+      }
+    }
+  }
+  throw new WorldCupError(`All Gemini model attempts failed: ${errors.join(" | ")}`, {
+    status: 502,
+    code: "GEMINI_MODEL_FALLBACKS_EXHAUSTED",
+    details: errors,
+  });
 }
 
 function createWavBuffer(pcmBuffer, sampleRate = 24000, channels = 1, bitsPerSample = 16) {
@@ -848,13 +879,21 @@ Return JSON:
 `.trim();
 
   try {
-    const result = await requestGeminiJson({ keyInfo, model: SEARCH_MODEL, prompt, temperature: 0.35, search: true });
+    const result = await requestGeminiJsonWithFallbacks({
+      keyInfo,
+      primaryModel: SEARCH_MODEL,
+      fallbackModels: SEARCH_FALLBACK_MODELS,
+      prompt,
+      temperature: 0.35,
+      search: true,
+    });
     const evidence = {
       ...fallbackEvidence(options, commentaryEvents),
       ...result.json,
       match: { ...options.match, ...(result.json.match || {}) },
       topic: cleanText(result.json.topic || options.topic),
       videoType: options.type,
+      researchModel: result.model,
       turningPoints: [...commentaryEvents, ...(Array.isArray(result.json.turningPoints) ? result.json.turningPoints : [])].slice(0, 24),
     };
     return { evidence, sources: result.sources, commentaryEvents };
@@ -1508,6 +1547,7 @@ async function createRunSkeleton(options) {
     visualPlan: {},
     rightsManifest: {},
     r2: { mp4Key: "", publicUrl: "" },
+    drive: { folderId: "", folderUrl: "", uploaded: [] },
     sources: [],
     attributions: [],
     warnings: [],
@@ -1546,6 +1586,7 @@ function runSummary(run) {
     srtSegments: run.srt?.segments?.length || 0,
     durationSeconds: run.audio?.durationSeconds || run.srt?.durationSeconds || 0,
     r2: run.r2 || {},
+    drive: run.drive || {},
     files: run.files || {},
     warnings: (run.warnings || []).slice(0, 6),
   };
@@ -1606,9 +1647,12 @@ export async function worldCupConfigSummary() {
         process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY &&
         process.env.R2_BUCKET_NAME,
     ),
+    driveReady: Boolean(hasGoogleDriveCredentials() && process.env.GOOGLE_DRIVE_FOLDER_ID),
+    uploadTarget: DEFAULT_UPLOAD_TARGET,
     stockReady: Boolean(pexels?.apiKey || pixabay?.apiKey),
     models: {
       search: SEARCH_MODEL,
+      searchFallbacks: SEARCH_FALLBACK_MODELS,
       writer: WRITER_MODEL,
       evaluator: EVALUATOR_MODEL,
       ttsRewrite: TTS_REWRITE_MODEL,
@@ -1727,7 +1771,7 @@ export async function generateWorldCupRun(input = {}) {
     await renderWorldCupRun(run.id, input);
   }
   if (options.upload) {
-    await uploadWorldCupRun(run.id);
+    await uploadWorldCupRun(run.id, input);
   }
   return await readWorldCupRun(run.id);
 }
@@ -2160,7 +2204,234 @@ function r2BasePrefix(run) {
   return `worldcup/${date}/${matchSlug}`;
 }
 
-export async function uploadWorldCupRun(id) {
+function googleDriveFolderUrl(folderId) {
+  return folderId ? `https://drive.google.com/drive/folders/${encodeURIComponent(folderId)}` : "";
+}
+
+function base64Url(data) {
+  return Buffer.from(data)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function parseGoogleServiceAccount() {
+  const rawJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON || "";
+  const rawBase64 = process.env.GOOGLE_SERVICE_ACCOUNT_BASE64 || process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_BASE64 || "";
+  if (rawJson.trim()) {
+    return JSON.parse(rawJson);
+  }
+  if (rawBase64.trim()) {
+    return JSON.parse(Buffer.from(rawBase64.trim(), "base64").toString("utf8"));
+  }
+  return null;
+}
+
+function hasGoogleDriveCredentials() {
+  try {
+    const credentials = parseGoogleServiceAccount();
+    return Boolean(credentials?.client_email && credentials?.private_key);
+  } catch {
+    return false;
+  }
+}
+
+let cachedGoogleDriveToken = null;
+
+async function getGoogleDriveAccessToken() {
+  const credentials = parseGoogleServiceAccount();
+  if (!credentials?.client_email || !credentials?.private_key) {
+    throw new WorldCupError("Missing Google Drive service account JSON credentials.", {
+      status: 400,
+      code: "MISSING_GOOGLE_DRIVE_CREDENTIALS",
+    });
+  }
+  if (cachedGoogleDriveToken && cachedGoogleDriveToken.expiresAt > Date.now() + 60000) {
+    return cachedGoogleDriveToken.accessToken;
+  }
+
+  const tokenUri = credentials.token_uri || "https://oauth2.googleapis.com/token";
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64Url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const payload = base64Url(
+    JSON.stringify({
+      iss: credentials.client_email,
+      scope: "https://www.googleapis.com/auth/drive.file",
+      aud: tokenUri,
+      iat: now,
+      exp: now + 3600,
+    }),
+  );
+  const signer = createSign("RSA-SHA256");
+  signer.update(`${header}.${payload}`);
+  const signature = signer.sign(String(credentials.private_key).replace(/\\n/g, "\n"));
+  const assertion = `${header}.${payload}.${base64Url(signature)}`;
+  const body = new URLSearchParams({
+    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    assertion,
+  });
+  const response = await fetch(tokenUri, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.access_token) {
+    throw new WorldCupError(`Google Drive token request failed with HTTP ${response.status}.`, {
+      status: 502,
+      code: "GOOGLE_DRIVE_TOKEN_FAILED",
+      details: data,
+    });
+  }
+  cachedGoogleDriveToken = {
+    accessToken: data.access_token,
+    expiresAt: Date.now() + Math.max(60, Number(data.expires_in || 3600) - 60) * 1000,
+  };
+  return cachedGoogleDriveToken.accessToken;
+}
+
+function driveQueryValue(value) {
+  return String(value || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+async function driveRequest(pathname, { method = "GET", query = {}, headers = {}, body = null, contentType = "application/json" } = {}) {
+  const token = await getGoogleDriveAccessToken();
+  const url = new URL(pathname.startsWith("http") ? pathname : `https://www.googleapis.com${pathname}`);
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  const response = await fetch(url, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(contentType ? { "Content-Type": contentType } : {}),
+      ...headers,
+    },
+    body,
+  });
+  const text = await response.text().catch(() => "");
+  const data = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    throw new WorldCupError(`Google Drive request failed with HTTP ${response.status}.`, {
+      status: response.status >= 400 && response.status < 500 ? response.status : 502,
+      code: "GOOGLE_DRIVE_REQUEST_FAILED",
+      details: data || text,
+    });
+  }
+  return data;
+}
+
+async function getOrCreateDriveFolder(name, parentId) {
+  const safeName = cleanText(name).slice(0, 120) || "folder";
+  const parentClause = parentId ? ` and '${driveQueryValue(parentId)}' in parents` : "";
+  const query = `name = '${driveQueryValue(safeName)}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false${parentClause}`;
+  const existing = await driveRequest("/drive/v3/files", {
+    query: {
+      q: query,
+      fields: "files(id,name,webViewLink)",
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true",
+    },
+  });
+  if (existing.files?.[0]?.id) {
+    return existing.files[0];
+  }
+  return await driveRequest("/drive/v3/files", {
+    method: "POST",
+    query: {
+      fields: "id,name,webViewLink",
+      supportsAllDrives: "true",
+    },
+    body: JSON.stringify({
+      name: safeName,
+      mimeType: "application/vnd.google-apps.folder",
+      parents: parentId ? [parentId] : undefined,
+    }),
+  });
+}
+
+async function uploadGoogleDriveFile({ folderId, name, body, contentType }) {
+  const token = await getGoogleDriveAccessToken();
+  const payload = Buffer.isBuffer(body) ? body : Buffer.from(String(body || ""));
+  const metadata = {
+    name,
+    parents: folderId ? [folderId] : undefined,
+  };
+  const startUrl = new URL("https://www.googleapis.com/upload/drive/v3/files");
+  startUrl.searchParams.set("uploadType", "resumable");
+  startUrl.searchParams.set("fields", "id,name,mimeType,size,webViewLink,webContentLink");
+  startUrl.searchParams.set("supportsAllDrives", "true");
+  const startResponse = await fetch(startUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json; charset=utf-8",
+      "X-Upload-Content-Type": contentType,
+      "X-Upload-Content-Length": String(payload.length),
+    },
+    body: JSON.stringify(metadata),
+  });
+  if (!startResponse.ok) {
+    const data = await startResponse.json().catch(() => ({}));
+    throw new WorldCupError(`Google Drive upload session failed for ${name}: HTTP ${startResponse.status}.`, {
+      status: 502,
+      code: "GOOGLE_DRIVE_UPLOAD_SESSION_FAILED",
+      details: data,
+    });
+  }
+  const uploadUrl = startResponse.headers.get("location");
+  if (!uploadUrl) {
+    throw new WorldCupError("Google Drive did not return a resumable upload URL.", {
+      status: 502,
+      code: "GOOGLE_DRIVE_UPLOAD_URL_MISSING",
+    });
+  }
+  const uploadResponse = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: {
+      "Content-Type": contentType,
+      "Content-Length": String(payload.length),
+    },
+    body: payload,
+  });
+  const data = await uploadResponse.json().catch(() => ({}));
+  if (!uploadResponse.ok) {
+    throw new WorldCupError(`Google Drive upload failed for ${name}: HTTP ${uploadResponse.status}.`, {
+      status: 502,
+      code: "GOOGLE_DRIVE_UPLOAD_FAILED",
+      details: data,
+    });
+  }
+  if (process.env.GOOGLE_DRIVE_MAKE_PUBLIC === "true") {
+    await driveRequest(`/drive/v3/files/${encodeURIComponent(data.id)}/permissions`, {
+      method: "POST",
+      query: { supportsAllDrives: "true" },
+      body: JSON.stringify({ role: "reader", type: "anyone" }),
+    }).catch(() => {});
+  }
+  return {
+    id: data.id,
+    name: data.name || name,
+    size: Number(data.size || payload.length),
+    mimeType: data.mimeType || contentType,
+    webViewLink: data.webViewLink || `https://drive.google.com/file/d/${data.id}/view`,
+    webContentLink: data.webContentLink || "",
+  };
+}
+
+function driveBaseParts(run) {
+  const date = cleanText(run.match?.date || run.createdAt?.slice(0, 10) || todayDate());
+  const matchSlug =
+    run.match?.teamA && run.match?.teamB
+      ? `${slugify(run.match.teamA)}-vs-${slugify(run.match.teamB)}`
+      : slugify(run.topic, "world-cup-topic");
+  return { date, matchSlug };
+}
+
+async function uploadWorldCupRunToR2(id) {
   const run = await readWorldCupRun(id);
   const runDir = path.join(runsRoot, run.id);
   const prefix = r2BasePrefix(run);
@@ -2221,6 +2492,118 @@ export async function uploadWorldCupRun(id) {
     contentType: "application/json; charset=utf-8",
   });
   return saved;
+}
+
+async function uploadWorldCupRunToDrive(id) {
+  const run = await readWorldCupRun(id);
+  const rootFolderId = cleanText(process.env.GOOGLE_DRIVE_FOLDER_ID || process.env.WORLD_CUP_GOOGLE_DRIVE_FOLDER_ID || "");
+  if (!rootFolderId) {
+    throw new WorldCupError("Missing GOOGLE_DRIVE_FOLDER_ID for World Cup Google Drive uploads.", {
+      status: 400,
+      code: "MISSING_GOOGLE_DRIVE_FOLDER_ID",
+    });
+  }
+
+  const runDir = path.join(runsRoot, run.id);
+  const { date, matchSlug } = driveBaseParts(run);
+  const worldcupFolder = await getOrCreateDriveFolder("worldcup", rootFolderId);
+  const dateFolder = await getOrCreateDriveFolder(date, worldcupFolder.id);
+  const matchFolder = await getOrCreateDriveFolder(matchSlug, dateFolder.id);
+  const uploaded = [];
+  const sidecars = [
+    ["script.json", run.files.script, "application/json; charset=utf-8"],
+    ["evidence.json", run.files.evidence, "application/json; charset=utf-8"],
+    ["srt.srt", run.files.srt, "application/x-subrip; charset=utf-8"],
+    ["visuals.json", run.files.visuals, "application/json; charset=utf-8"],
+    ["attribution.json", run.files.attribution, "application/json; charset=utf-8"],
+    ["rights.json", run.files.rights, "application/json; charset=utf-8"],
+    ["render-log.json", run.files.renderLog, "application/json; charset=utf-8"],
+  ];
+
+  if (run.files.mp4) {
+    const mp4Name = `${run.type === "postmatch" ? "postmatch" : run.type}.mp4`;
+    uploaded.push(
+      await uploadGoogleDriveFile({
+        folderId: matchFolder.id,
+        name: mp4Name,
+        body: await fs.readFile(path.join(runDir, run.files.mp4)),
+        contentType: "video/mp4",
+      }),
+    );
+  }
+  if (run.files.audio) {
+    uploaded.push(
+      await uploadGoogleDriveFile({
+        folderId: matchFolder.id,
+        name: "audio.wav",
+        body: await fs.readFile(path.join(runDir, run.files.audio)),
+        contentType: "audio/wav",
+      }),
+    );
+  }
+  for (const [targetName, fileName, contentType] of sidecars) {
+    if (!fileName) {
+      continue;
+    }
+    const localPath = path.join(runDir, fileName);
+    if (!(await fileExists(localPath))) {
+      continue;
+    }
+    uploaded.push(
+      await uploadGoogleDriveFile({
+        folderId: matchFolder.id,
+        name: targetName,
+        body: await fs.readFile(localPath),
+        contentType,
+      }),
+    );
+  }
+
+  run.drive = {
+    folderId: matchFolder.id,
+    folderUrl: matchFolder.webViewLink || googleDriveFolderUrl(matchFolder.id),
+    rootFolderId,
+    uploadedAt: nowIso(),
+    uploaded,
+  };
+  run.status = run.files.mp4 ? "uploaded_drive" : "sidecars_uploaded_drive";
+  uploaded.push(
+    await uploadGoogleDriveFile({
+      folderId: matchFolder.id,
+      name: "run.json",
+      body: `${JSON.stringify(run, null, 2)}\n`,
+      contentType: "application/json; charset=utf-8",
+    }),
+  );
+  const saved = await saveRun(run);
+  const index = await listWorldCupRuns();
+  await uploadGoogleDriveFile({
+    folderId: worldcupFolder.id,
+    name: "index.json",
+    body: `${JSON.stringify(index, null, 2)}\n`,
+    contentType: "application/json; charset=utf-8",
+  });
+  return saved;
+}
+
+export async function uploadWorldCupRun(id, options = {}) {
+  const destination = String(options.destination || options.uploadTarget || DEFAULT_UPLOAD_TARGET || "google-drive").toLowerCase();
+  if (destination === "r2" || destination === "cloudflare-r2") {
+    return await uploadWorldCupRunToR2(id);
+  }
+  if (destination === "auto") {
+    if (hasGoogleDriveCredentials() && (process.env.GOOGLE_DRIVE_FOLDER_ID || process.env.WORLD_CUP_GOOGLE_DRIVE_FOLDER_ID)) {
+      return await uploadWorldCupRunToDrive(id);
+    }
+    return await uploadWorldCupRunToR2(id);
+  }
+  if (destination === "google-drive" || destination === "drive" || destination === "gdrive") {
+    return await uploadWorldCupRunToDrive(id);
+  }
+  throw new WorldCupError(`Unsupported World Cup upload target: ${destination}`, {
+    status: 400,
+    code: "UNSUPPORTED_UPLOAD_TARGET",
+  });
 }
 
 export async function resolveWorldCupAsset(id, fileKey = "mp4") {

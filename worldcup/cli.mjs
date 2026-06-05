@@ -68,11 +68,13 @@ async function main() {
     venue: args.venue,
     audience: args.audience,
     language: args.language,
+    source: args.source,
     commentaryUrl: args.commentaryUrl,
     commentaryText: args.commentaryText,
     durationSeconds: args.durationSeconds,
     render: boolArg(args.render, false),
     upload: boolArg(args.upload, false),
+    uploadTarget: args.uploadTarget || args.destination,
     offline: boolArg(args.offline, false),
     generateAudio: boolArg(args.generateAudio, true),
     force: boolArg(args.force, false),
@@ -94,7 +96,7 @@ async function main() {
       run = await renderWorldCupRun(args.id, options);
     }
     if (args.uploadOnly) {
-      run = await uploadWorldCupRun(args.id);
+      run = await uploadWorldCupRun(args.id, options);
     }
     console.log(JSON.stringify(summarize(run), null, 2));
     return;
@@ -105,7 +107,7 @@ async function main() {
     run = await renderWorldCupRun(run.id, options);
   }
   if (options.upload && run.status !== "uploaded") {
-    run = await uploadWorldCupRun(run.id);
+    run = await uploadWorldCupRun(run.id, options);
   }
   console.log(JSON.stringify(summarize(run), null, 2));
 }
