@@ -53,7 +53,7 @@ Without `CONTENT_STUDIO_API_BASE_URL`, the deployed frontend will load but will 
 - Model: Gemini exposes the available TTS models from this starter app. NVIDIA exposes Magpie model choices for when you add an NVIDIA key and endpoint URL.
 - Mood: choose None, Thriller, Emotional, Documentary, YouTube, Horror, or Calm. Use None when line-level script tags should control the delivery.
 - Custom direction: optional override for exact acting direction, pacing, pauses, or emotion.
-- Voice mode: use `Single narrator`, `2-speaker dialogue`, or `Normal story -> advanced dialogue`. The advanced mode uses `gemini-3-flash-preview` to rewrite a normal story into tagged two-speaker dialogue before TTS.
+- Voice mode: use `Single narrator`, `2-speaker dialogue`, or `Normal story -> advanced dialogue`. The advanced mode uses `gemini-3.1-flash-lite` by default to rewrite a normal story into tagged two-speaker dialogue before TTS.
 - Tagged dialogue lines can use forms such as `[Narrator | Leda | tense, slow]` or `[Mysterious Voice | Kore | whisper, eerie]`; the backend reads these tags and builds the Gemini multi-speaker mapping from the script.
 - Settings: keep the original `.env` Gemini key and save up to four extra Gemini keys in `.gemini-keys.json`. Switch the active key instantly from the frontend.
 - API errors show structured details such as error code, provider, model, active key, HTTP status, and Gemini status when available.
@@ -63,10 +63,10 @@ Without `CONTENT_STUDIO_API_BASE_URL`, the deployed frontend will load but will 
 
 Use the Storyboard prompts section after writing or pasting your story.
 
-- Model used: `gemini-2.5-flash`
+- Model used by default: `gemini-3.1-flash-lite`
 - Fast mode uses the script plus generated audio duration.
-- Audio-aware direct sends only the generated audio to Gemini 2.5 Flash and creates prompts in one call.
-- Audio-aware detailed sends only the generated audio to Gemini 2.5 Flash, first creates a detailed timed transcript/beat sheet, then creates prompts from that timeline in a second call.
+- Audio-aware direct sends only the generated audio to the configured Lite text model and creates prompts in one call.
+- Audio-aware detailed sends only the generated audio to the configured Lite text model, first creates a detailed timed transcript/beat sheet, then creates prompts from that timeline in a second call.
 - Pick maximum image duration such as 3, 4, 5, or 6 seconds. At max 5 seconds, a 60-second audio generates at least 12 timed image prompts, but Gemini can still choose shorter 3-4 second cuts when the pace demands it.
 - Output: detailed standalone 9:16 Flow-ready prompts for Facebook Reels, Instagram Reels, and YouTube Shorts.
 - Each frame includes start time, end time, story beat, image prompt, and negative prompt.
@@ -128,11 +128,10 @@ Pipeline stages:
 
 Default World Cup models:
 
-- Search/evidence grounding: `gemini-2.5-pro`, falling back to `gemini-3.5-flash` then `gemini-2.5-flash` if quota or temporary demand blocks the first model.
-- Script writing and TTS rewrite: `gemini-3.5-flash`
-- Script evaluation: `gemini-3-flash-preview`
-- Audio-aware SRT: `gemini-2.5-flash`
-- TTS audio: `gemini-3.1-flash-tts-preview`
+- Text-heavy work now defaults to `gemini-3.1-flash-lite`: search/evidence, script writing, script evaluation, TTS rewrite, and audio-aware SRT.
+- Search falls back to `gemini-2.5-flash-lite` then `gemini-2.5-flash` if the Lite default is temporarily blocked.
+- TTS audio stays on `gemini-3.1-flash-tts-preview` by default because TTS audio models are separate from text-out Lite models.
+- Gemini calls retry up to three times after `5s`, `10s`, and `15s` for transient network, server, high-demand, timeout, or rate-limit errors. Hard zero-quota/model-access errors fail fast so you can switch keys or models.
 
 GitHub Actions:
 

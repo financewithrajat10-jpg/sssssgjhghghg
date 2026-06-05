@@ -57,9 +57,14 @@ const GEMINI_TTS_MODELS = [
   "gemini-2.5-pro-preview-tts",
 ];
 
-const STORYBOARD_MODEL = "gemini-2.5-flash";
-const SCRIPT_REWRITE_MODEL = "gemini-3-flash-preview";
-const SCRIPT_STUDIO_RESEARCH_MODEL = "gemini-2.5-flash";
+const GEMINI_LITE_TEXT_MODEL = process.env.GEMINI_LITE_TEXT_MODEL || "gemini-3.1-flash-lite";
+const GEMINI_RETRY_DELAYS_MS = String(process.env.GEMINI_RETRY_DELAYS || "5000,10000,15000")
+  .split(",")
+  .map((delay) => Number(delay.trim()))
+  .filter((delay) => Number.isFinite(delay) && delay > 0);
+const STORYBOARD_MODEL = process.env.STORYBOARD_MODEL || GEMINI_LITE_TEXT_MODEL;
+const SCRIPT_REWRITE_MODEL = process.env.SCRIPT_REWRITE_MODEL || GEMINI_LITE_TEXT_MODEL;
+const SCRIPT_STUDIO_RESEARCH_MODEL = process.env.SCRIPT_STUDIO_RESEARCH_MODEL || GEMINI_LITE_TEXT_MODEL;
 const SCRIPT_STUDIO_WRITER_MODEL = SCRIPT_REWRITE_MODEL;
 const SMART_CAPTION_MODEL_CANDIDATES = [
   process.env.SMART_CAPTION_MODEL,
@@ -80,6 +85,7 @@ const CAPTION_STYLE_IDS = new Set([
 ]);
 
 const GEMINI_MODEL_LABELS = {
+  "gemini-3.1-flash-lite": "Gemini 3.1 Flash Lite",
   "gemini-3.1-flash-tts-preview": "Gemini 3.1 Flash TTS Preview",
   "gemini-2.5-flash-preview-tts": "Gemini 2.5 Flash TTS Preview",
   "gemini-2.5-pro-preview-tts": "Gemini 2.5 Pro TTS Preview",
@@ -1224,6 +1230,76 @@ function wrapNetworkError(error, { provider, model, keyId }) {
   });
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isHardGeminiQuotaError(error) {
+  const text = `${error?.message || ""} ${JSON.stringify(error?.details || {})}`.toLowerCase();
+  return /limit:\s*0/.test(text) || /free_tier.*limit:\s*0/.test(text);
+}
+
+function isRetryableGeminiError(error) {
+  if (!error || isHardGeminiQuotaError(error)) {
+    return false;
+  }
+  const text = `${error.message || ""} ${JSON.stringify(error.details || {})}`.toLowerCase();
+  return (
+    error.code === "NETWORK_OR_SERVER_UNREACHABLE" ||
+    error.code === "GEMINI_SERVER_ERROR" ||
+    error.code === "QUOTA_OR_RATE_LIMIT" ||
+    /high demand|overloaded|temporar|please retry|rate limit|unavailable|deadline|timeout/.test(text)
+  );
+}
+
+async function requestGeminiGenerateContent({ keyInfo, model, body }) {
+  if (!keyInfo?.apiKey) {
+    throw new AppError("Missing Gemini API key.", {
+      status: 400,
+      code: "MISSING_GEMINI_KEY",
+      provider: "gemini",
+      model,
+      keyId: keyInfo?.id || null,
+    });
+  }
+
+  let lastError = null;
+  for (let attempt = 0; attempt <= GEMINI_RETRY_DELAYS_MS.length; attempt += 1) {
+    let response;
+    try {
+      response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": keyInfo.apiKey,
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      lastError = wrapNetworkError(error, { provider: "gemini", model, keyId: keyInfo.id });
+      if (attempt < GEMINI_RETRY_DELAYS_MS.length && isRetryableGeminiError(lastError)) {
+        await sleep(GEMINI_RETRY_DELAYS_MS[attempt]);
+        continue;
+      }
+      throw lastError;
+    }
+
+    const data = await response.json().catch(() => ({}));
+    if (response.ok) {
+      return data;
+    }
+
+    lastError = classifyGeminiError(data, response.status, { model, keyId: keyInfo.id });
+    if (attempt < GEMINI_RETRY_DELAYS_MS.length && isRetryableGeminiError(lastError)) {
+      await sleep(GEMINI_RETRY_DELAYS_MS[attempt]);
+      continue;
+    }
+    throw lastError;
+  }
+
+  throw lastError;
+}
+
 function readRequestJson(req) {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -1755,31 +1831,18 @@ async function rewriteDialogueScript(body) {
     style: body.rewriteStyle,
   });
 
-  let response;
-  try {
-    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${SCRIPT_REWRITE_MODEL}:generateContent`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": keyInfo.apiKey,
+  const data = await requestGeminiGenerateContent({
+    keyInfo,
+    model: SCRIPT_REWRITE_MODEL,
+    body: {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.85,
+        responseMimeType: "application/json",
       },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.85,
-          responseMimeType: "application/json",
-        },
-        model: SCRIPT_REWRITE_MODEL,
-      }),
-    });
-  } catch (error) {
-    throw wrapNetworkError(error, { provider: "gemini", model: SCRIPT_REWRITE_MODEL, keyId: keyInfo.id });
-  }
-
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw classifyGeminiError(data, response.status, { model: SCRIPT_REWRITE_MODEL, keyId: keyInfo.id });
-  }
+      model: SCRIPT_REWRITE_MODEL,
+    },
+  });
 
   const responseText = data?.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n").trim();
   const parsed = extractJson(responseText);
@@ -1798,7 +1861,7 @@ async function rewriteDialogueScript(body) {
     title: parsed.title || "Advanced dialogue script",
     rewriteMood,
     model: SCRIPT_REWRITE_MODEL,
-    modelLabel: "Gemini 3 Flash Preview",
+    modelLabel: GEMINI_MODEL_LABELS[SCRIPT_REWRITE_MODEL] || SCRIPT_REWRITE_MODEL,
     voicePreference: voicePlan.mode,
     speakerPlan: parsed.speakerPlan || extractSpeakersFromTaggedScript(parsed.taggedScript).map((speaker) => ({ speaker: speaker.name, voice: speaker.voice })),
     taggedScript: String(parsed.taggedScript).trim(),
@@ -4178,35 +4241,19 @@ async function synthesizeWithGemini({ text, voice, mood, style, model, voiceMode
     speakers: resolvedSpeakers,
   });
 
-  let response;
-  try {
-    response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": keyInfo.apiKey,
-        },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            responseModalities: ["AUDIO"],
-            temperature: 1.2,
-            speechConfig,
-          },
-          model: selectedModel,
-        }),
+  const data = await requestGeminiGenerateContent({
+    keyInfo,
+    model: selectedModel,
+    body: {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseModalities: ["AUDIO"],
+        temperature: 1.2,
+        speechConfig,
       },
-    );
-  } catch (error) {
-    throw wrapNetworkError(error, { provider: "gemini", model: selectedModel, keyId: keyInfo.id });
-  }
-
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw classifyGeminiError(data, response.status, { model: selectedModel, keyId: keyInfo.id });
-  }
+      model: selectedModel,
+    },
+  });
 
   const inlineData = data?.candidates?.[0]?.content?.parts?.find((part) => part.inlineData)?.inlineData;
   if (!inlineData?.data) {
@@ -4328,7 +4375,6 @@ async function synthesizeWithNvidia({ text, voice, mood, style, model }) {
 }
 
 async function requestGeminiJsonDetailed({ keyInfo, parts, model = STORYBOARD_MODEL, temperature = 0.8, tools = null }) {
-  let response;
   const hasTools = Array.isArray(tools) && tools.length > 0;
   const body = {
     contents: [{ parts }],
@@ -4343,23 +4389,7 @@ async function requestGeminiJsonDetailed({ keyInfo, parts, model = STORYBOARD_MO
     body.tools = tools;
   }
 
-  try {
-    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": keyInfo.apiKey,
-      },
-      body: JSON.stringify(body),
-    });
-  } catch (error) {
-    throw wrapNetworkError(error, { provider: "gemini", model, keyId: keyInfo.id });
-  }
-
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw classifyGeminiError(data, response.status, { model, keyId: keyInfo.id });
-  }
+  const data = await requestGeminiGenerateContent({ keyInfo, model, body });
 
   const textResponse = data?.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n");
   return {
@@ -4891,7 +4921,7 @@ async function generateScriptStudio(body) {
 
   return {
     model: SCRIPT_STUDIO_WRITER_MODEL,
-    modelLabel: "Gemini 3 Flash Preview",
+    modelLabel: GEMINI_MODEL_LABELS[SCRIPT_STUDIO_WRITER_MODEL] || SCRIPT_STUDIO_WRITER_MODEL,
     researchModel: researchDepth === "off" ? null : SCRIPT_STUDIO_RESEARCH_MODEL,
     keyId: keyInfo.id,
     keyLabel: keyInfo.label,
@@ -5259,6 +5289,8 @@ async function handleApi(req, res) {
       scriptRewriteModel: SCRIPT_REWRITE_MODEL,
       scriptStudioModel: SCRIPT_STUDIO_WRITER_MODEL,
       scriptStudioResearchModel: SCRIPT_STUDIO_RESEARCH_MODEL,
+      geminiLiteTextModel: GEMINI_LITE_TEXT_MODEL,
+      geminiRetryDelaysMs: GEMINI_RETRY_DELAYS_MS,
       worldCup: await worldCupConfigSummary(),
     });
   }

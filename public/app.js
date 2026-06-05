@@ -491,7 +491,7 @@ function updateStoryboardModeHint() {
 
   const modeText = {
     fast: "Fast mode uses the script plus generated audio duration for timed prompts.",
-    "audio-aware": "Audio-aware direct sends only the generated audio to Gemini 2.5 Flash and writes prompts in one call.",
+    "audio-aware": "Audio-aware direct sends only the generated audio to the configured Lite text model and writes prompts in one call.",
     "audio-detailed": "Audio-aware detailed sends only the generated audio first, builds a detailed timed transcript, then creates prompts from that timeline in a second call.",
     "srt-director": "SRT-first Director Mode creates or reuses the audio transcript, writes a director summary, then builds prompts from caption beats.",
   };
@@ -805,7 +805,7 @@ async function rewriteScriptToDialogue({ silent = false } = {}) {
   const originalButtonText = elements.rewriteButton.textContent;
   elements.rewriteButton.textContent = "Rewriting...";
   if (!silent) {
-    setMessage(`Rewriting with ${config.scriptRewriteModel || "gemini-3-flash-preview"}...`);
+    setMessage(`Rewriting with ${config.scriptRewriteModel || "gemini-3.1-flash-lite"}...`);
   }
 
   try {
@@ -1939,10 +1939,10 @@ async function generateStoryboard() {
         ? "Reusing the current SRT, writing a new director summary, then regenerating Flow prompts from caption beats."
         : "Listening to audio, creating SRT, writing a director summary, then generating Flow prompts from caption beats."
       : mode === "audio-detailed"
-      ? "Listening to audio, building a detailed timeline, then writing Flow prompts with Gemini 2.5 Flash."
+      ? "Listening to audio, building a detailed timeline, then writing Flow prompts with the configured Lite text model."
       : mode === "audio-aware"
-        ? "Listening to generated audio with Gemini 2.5 Flash."
-        : "Analyzing the script and audio duration with Gemini 2.5 Flash.";
+        ? "Listening to generated audio with the configured Lite text model."
+        : "Analyzing the script and audio duration with the configured Lite text model.";
   elements.storyboardResult.innerHTML = `<p class="message">${loadingText}</p>`;
 
   try {

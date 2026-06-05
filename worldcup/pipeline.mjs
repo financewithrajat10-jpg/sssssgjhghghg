@@ -21,19 +21,28 @@ const VIDEO_HEIGHT = 1920;
 const VIDEO_FPS = 30;
 const MAX_SAVED_KEYS = 4;
 const DEFAULT_LANGUAGE = process.env.WORLD_CUP_DEFAULT_LANGUAGE || "en";
-const SEARCH_MODEL = process.env.WORLD_CUP_SEARCH_MODEL || process.env.WORLD_CUP_RESEARCH_MODEL || "gemini-2.5-pro";
-const SEARCH_FALLBACK_MODELS = String(process.env.WORLD_CUP_SEARCH_FALLBACK_MODELS || "gemini-3.5-flash,gemini-2.5-flash")
+const LITE_TEXT_MODEL = process.env.WORLD_CUP_LITE_TEXT_MODEL || "gemini-3.1-flash-lite";
+const SEARCH_MODEL = process.env.WORLD_CUP_SEARCH_MODEL || process.env.WORLD_CUP_RESEARCH_MODEL || LITE_TEXT_MODEL;
+const SEARCH_FALLBACK_MODELS = String(process.env.WORLD_CUP_SEARCH_FALLBACK_MODELS || "gemini-2.5-flash-lite,gemini-2.5-flash")
   .split(",")
   .map((model) => model.trim())
   .filter(Boolean);
-const WRITER_MODEL = process.env.WORLD_CUP_WRITER_MODEL || "gemini-3.5-flash";
-const EVALUATOR_MODEL = process.env.WORLD_CUP_EVALUATOR_MODEL || "gemini-3-flash-preview";
+const WRITER_MODEL = process.env.WORLD_CUP_WRITER_MODEL || LITE_TEXT_MODEL;
+const EVALUATOR_MODEL = process.env.WORLD_CUP_EVALUATOR_MODEL || LITE_TEXT_MODEL;
 const TTS_REWRITE_MODEL = process.env.WORLD_CUP_TTS_REWRITE_MODEL || WRITER_MODEL;
 const TTS_MODEL = process.env.WORLD_CUP_TTS_MODEL || "gemini-3.1-flash-tts-preview";
-const AUDIO_SRT_MODEL = process.env.WORLD_CUP_AUDIO_SRT_MODEL || "gemini-2.5-flash";
+const AUDIO_SRT_MODEL = process.env.WORLD_CUP_AUDIO_SRT_MODEL || LITE_TEXT_MODEL;
+const AUDIO_SRT_FALLBACK_MODELS = String(process.env.WORLD_CUP_AUDIO_SRT_FALLBACK_MODELS || "gemini-2.5-flash")
+  .split(",")
+  .map((model) => model.trim())
+  .filter(Boolean);
 const MAX_VIDEOS_PER_DAY = Number(process.env.WORLD_CUP_MAX_VIDEOS_PER_DAY || 3);
 const DEFAULT_SCHEDULE_HOURS = process.env.WORLD_CUP_SCHEDULE_HOURS || "9,15,21";
 const DEFAULT_UPLOAD_TARGET = process.env.WORLD_CUP_UPLOAD_TARGET || "google-drive";
+const GEMINI_RETRY_DELAYS_MS = String(process.env.WORLD_CUP_GEMINI_RETRY_DELAYS || "5000,10000,15000")
+  .split(",")
+  .map((delay) => Number(delay.trim()))
+  .filter((delay) => Number.isFinite(delay) && delay > 0);
 const STOCK_VIDEO_HOSTS = new Set([
   "player.vimeo.com",
   "vod-progressive.akamaized.net",
@@ -310,7 +319,32 @@ function extractGroundingSources(groundingMetadata) {
     .slice(0, 12);
 }
 
-async function requestGeminiJson({ keyInfo, model, prompt, temperature = 0.6, search = false, parts = null }) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isHardGeminiQuotaError(error) {
+  const text = `${error?.message || ""} ${JSON.stringify(error?.details || {})}`.toLowerCase();
+  return /limit:\s*0/.test(text) || /free_tier.*limit:\s*0/.test(text);
+}
+
+function isRetryableGeminiError(error) {
+  if (!error) {
+    return false;
+  }
+  if (isHardGeminiQuotaError(error)) {
+    return false;
+  }
+  const text = `${error.message || ""} ${JSON.stringify(error.details || {})}`.toLowerCase();
+  return (
+    error.code === "NETWORK_OR_SERVER_UNREACHABLE" ||
+    error.code === "GEMINI_SERVER_ERROR" ||
+    error.code === "QUOTA_OR_RATE_LIMIT" ||
+    /high demand|overloaded|temporar|please retry|rate limit|unavailable|deadline|timeout/.test(text)
+  );
+}
+
+async function requestGeminiGenerateContent({ keyInfo, model, body }) {
   if (!keyInfo?.apiKey) {
     throw new WorldCupError("Missing Gemini API key for World Cup generation.", {
       status: 400,
@@ -320,6 +354,47 @@ async function requestGeminiJson({ keyInfo, model, prompt, temperature = 0.6, se
     });
   }
 
+  let lastError = null;
+  for (let attempt = 0; attempt <= GEMINI_RETRY_DELAYS_MS.length; attempt += 1) {
+    let response;
+    try {
+      response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": keyInfo.apiKey,
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      lastError = new WorldCupError(`Gemini network request failed: ${error.message}`, {
+        status: 502,
+        code: "NETWORK_OR_SERVER_UNREACHABLE",
+        provider: "gemini",
+        model,
+      });
+      if (attempt < GEMINI_RETRY_DELAYS_MS.length && isRetryableGeminiError(lastError)) {
+        await sleep(GEMINI_RETRY_DELAYS_MS[attempt]);
+        continue;
+      }
+      throw lastError;
+    }
+
+    const data = await response.json().catch(() => ({}));
+    if (response.ok) {
+      return data;
+    }
+    lastError = classifyGeminiError(data, response.status, model);
+    if (attempt < GEMINI_RETRY_DELAYS_MS.length && isRetryableGeminiError(lastError)) {
+      await sleep(GEMINI_RETRY_DELAYS_MS[attempt]);
+      continue;
+    }
+    throw lastError;
+  }
+  throw lastError;
+}
+
+async function requestGeminiJson({ keyInfo, model, prompt, temperature = 0.6, search = false, parts = null }) {
   const body = {
     contents: [{ parts: parts || [{ text: prompt }] }],
     generationConfig: { temperature },
@@ -330,29 +405,7 @@ async function requestGeminiJson({ keyInfo, model, prompt, temperature = 0.6, se
     body.generationConfig.responseMimeType = "application/json";
   }
 
-  let response;
-  try {
-    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": keyInfo.apiKey,
-      },
-      body: JSON.stringify(body),
-    });
-  } catch (error) {
-    throw new WorldCupError(`Gemini network request failed: ${error.message}`, {
-      status: 502,
-      code: "NETWORK_OR_SERVER_UNREACHABLE",
-      provider: "gemini",
-      model,
-    });
-  }
-
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw classifyGeminiError(data, response.status, model);
-  }
+  const data = await requestGeminiGenerateContent({ keyInfo, model, body });
   const text = data?.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n") || "";
   return {
     json: extractJson(text),
@@ -362,12 +415,12 @@ async function requestGeminiJson({ keyInfo, model, prompt, temperature = 0.6, se
   };
 }
 
-async function requestGeminiJsonWithFallbacks({ keyInfo, primaryModel, fallbackModels = [], prompt, temperature = 0.6, search = false }) {
+async function requestGeminiJsonWithFallbacks({ keyInfo, primaryModel, fallbackModels = [], prompt, temperature = 0.6, search = false, parts = null }) {
   const models = [primaryModel, ...fallbackModels].filter(Boolean).filter((model, index, list) => list.indexOf(model) === index);
   const errors = [];
   for (const model of models) {
     try {
-      const result = await requestGeminiJson({ keyInfo, model, prompt, temperature, search });
+      const result = await requestGeminiJson({ keyInfo, model, prompt, temperature, search, parts });
       return { ...result, model };
     } catch (error) {
       errors.push(`${model}: ${error.message}`);
@@ -435,41 +488,23 @@ Voice style: clear English, natural football-fan rhythm, energetic but not shout
 ${screenplay}
 `.trim();
 
-  let response;
-  try {
-    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${TTS_MODEL}:generateContent`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": keyInfo.apiKey,
-      },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseModalities: ["AUDIO"],
-          temperature: 1.1,
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: selectedVoice },
-            },
+  const data = await requestGeminiGenerateContent({
+    keyInfo,
+    model: TTS_MODEL,
+    body: {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseModalities: ["AUDIO"],
+        temperature: 1.1,
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: selectedVoice },
           },
         },
-        model: TTS_MODEL,
-      }),
-    });
-  } catch (error) {
-    throw new WorldCupError(`Gemini TTS network request failed: ${error.message}`, {
-      status: 502,
-      code: "NETWORK_OR_SERVER_UNREACHABLE",
-      provider: "gemini",
+      },
       model: TTS_MODEL,
-    });
-  }
-
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw classifyGeminiError(data, response.status, TTS_MODEL);
-  }
+    },
+  });
   const inlineData = data?.candidates?.[0]?.content?.parts?.find((part) => part.inlineData)?.inlineData;
   if (!inlineData?.data) {
     throw new WorldCupError("Gemini TTS did not return audio data.", {
@@ -616,9 +651,10 @@ Return:
 }
 `.trim();
   try {
-    const result = await requestGeminiJson({
+    const result = await requestGeminiJsonWithFallbacks({
       keyInfo,
-      model: AUDIO_SRT_MODEL,
+      primaryModel: AUDIO_SRT_MODEL,
+      fallbackModels: AUDIO_SRT_FALLBACK_MODELS,
       temperature: 0.2,
       parts: [
         { text: prompt },
@@ -642,7 +678,7 @@ Return:
       segments,
       srt: buildSrt(segments),
       source: "audio-aware-gemini",
-      model: AUDIO_SRT_MODEL,
+      model: result.model || AUDIO_SRT_MODEL,
     };
   } catch (error) {
     warnings.push(`Audio-aware SRT fell back to script timing: ${error.message}`);
@@ -1658,7 +1694,9 @@ export async function worldCupConfigSummary() {
       ttsRewrite: TTS_REWRITE_MODEL,
       tts: TTS_MODEL,
       audioSrt: AUDIO_SRT_MODEL,
+      audioSrtFallbacks: AUDIO_SRT_FALLBACK_MODELS,
     },
+    retryDelaysMs: GEMINI_RETRY_DELAYS_MS,
     defaultCaptionStyle: "creator-yellow-pop",
     defaultCaptionAnimation: "slide-lift",
     maxVideosPerDay: MAX_VIDEOS_PER_DAY,
