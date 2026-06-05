@@ -104,6 +104,17 @@ const elements = {
   scriptSourceList: document.querySelector("#scriptSourceList"),
 };
 
+const apiBaseUrl = String(window.CONTENT_STUDIO_API_BASE_URL || "").replace(/\/+$/, "");
+
+function apiUrl(path) {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${apiBaseUrl}${normalizedPath}`;
+}
+
+function apiFetch(path, options) {
+  return fetch(apiUrl(path), options);
+}
+
 let selectedMood = "thriller";
 let selectedImageMood = "cinematic";
 let lastScriptStudioResult = null;
@@ -733,7 +744,7 @@ function refreshProviderControls() {
 
 async function loadConfig() {
   try {
-    const response = await fetch("/api/config");
+    const response = await apiFetch("/api/config");
     config = await response.json();
     populateScriptStudioSelects();
     refreshProviderControls();
@@ -779,7 +790,7 @@ async function rewriteScriptToDialogue({ silent = false } = {}) {
   }
 
   try {
-    const response = await fetch("/api/rewrite-dialogue", {
+    const response = await apiFetch("/api/rewrite-dialogue", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -832,7 +843,7 @@ async function generateVoice() {
   setMessage("This can take a few seconds depending on the provider.");
 
   try {
-    const response = await fetch("/api/tts", {
+    const response = await apiFetch("/api/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1713,7 +1724,7 @@ async function generateScriptStudio() {
 
   try {
     const history = await scriptHistoryContext();
-    const response = await fetch("/api/script-studio", {
+    const response = await apiFetch("/api/script-studio", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1919,7 +1930,7 @@ async function generateStoryboard() {
     const voiceMood = findConfigItem(currentProviderConfig().moods || [], selectedMood);
     const imageMood = findConfigItem(config.imageMoods || [], selectedImageMood);
     const promptQuality = findConfigItem(config.promptQualityModes || [], elements.promptQuality.value);
-    const response = await fetch("/api/storyboard", {
+    const response = await apiFetch("/api/storyboard", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2123,7 +2134,7 @@ async function generateStockVideoTimeline({ quiet = false } = {}) {
     setMessage("Video mode is listening to the current voice audio and creating timed SRT beats.");
   }
   try {
-    const response = await fetch("/api/stock-video-timeline", {
+    const response = await apiFetch("/api/stock-video-timeline", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2183,7 +2194,7 @@ async function designStockSmartCaptions() {
   elements.stockSmartCaptionButton.textContent = "Designing...";
   elements.stockCaptionSummary.textContent = "Designing caption rhythm, highlights, placement, and animation.";
   try {
-    const response = await fetch("/api/stock-video-smart-captions", {
+    const response = await apiFetch("/api/stock-video-smart-captions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2235,7 +2246,7 @@ async function generateStockVideoPlan() {
   elements.stockPlanButton.textContent = "Finding clips...";
   elements.stockVideoResult.innerHTML = `<p class="message">Writing stock search queries, then checking Pexels/Pixabay for matching vertical clips.</p>`;
   try {
-    const response = await fetch("/api/stock-video-plan", {
+    const response = await apiFetch("/api/stock-video-plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2292,7 +2303,7 @@ async function renderStockVideo() {
   elements.stockRenderButton.textContent = "Rendering...";
   setMessage("FFmpeg is downloading, trimming, cropping, and combining the stock clips.");
   try {
-    const response = await fetch("/api/stock-video-render", {
+    const response = await apiFetch("/api/stock-video-render", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2373,7 +2384,7 @@ async function generateVoiceDemos() {
 
       let result = null;
       for (let attempt = 0; attempt < 2; attempt += 1) {
-        const response = await fetch("/api/tts", {
+        const response = await apiFetch("/api/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -2454,7 +2465,7 @@ function renderKeyList(keyData) {
 }
 
 async function loadKeySettings() {
-  const response = await fetch("/api/gemini-keys");
+  const response = await apiFetch("/api/gemini-keys");
   const result = await response.json();
   if (!response.ok) {
     throwApiError(result, "Unable to load Gemini keys.");
@@ -2471,7 +2482,7 @@ async function updateKeySettings(action, keyId = "") {
     body.apiKey = elements.apiKeyInput.value.trim();
   }
 
-  const response = await fetch("/api/gemini-keys", {
+  const response = await apiFetch("/api/gemini-keys", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -2547,7 +2558,7 @@ function renderStockKeyLists(stockKeys) {
 }
 
 async function loadStockKeySettings() {
-  const response = await fetch("/api/stock-keys");
+  const response = await apiFetch("/api/stock-keys");
   const result = await response.json();
   if (!response.ok) {
     throwApiError(result, "Unable to load stock media keys.");
@@ -2564,7 +2575,7 @@ async function updateStockKeySettings(provider, action, keyId = "") {
     body.apiKey = refs.input.value.trim();
   }
 
-  const response = await fetch("/api/stock-keys", {
+  const response = await apiFetch("/api/stock-keys", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -2969,12 +2980,20 @@ function activateTab(button) {
     tabButton.classList.toggle("is-active", tabButton === button);
   }
 
+  updateWorkflowStrip(targetId);
+
   if (action === "rewrite") {
     elements.provider.value = "gemini";
     refreshProviderControls();
     elements.voiceMode.value = "rewrite";
     updateVoiceModeUi();
     elements.rewriteStyle.focus();
+  }
+}
+
+function updateWorkflowStrip(targetId) {
+  for (const step of document.querySelectorAll("[data-workflow-step]")) {
+    step.classList.toggle("is-live", step.dataset.workflowStep === targetId);
   }
 }
 
@@ -3045,6 +3064,7 @@ for (const button of document.querySelectorAll(".tab-button")) {
 }
 
 updateCharCount();
+updateWorkflowStrip("scriptStudioPane");
 updateStoryboardModeHint();
 loadConfig();
 renderMemory();

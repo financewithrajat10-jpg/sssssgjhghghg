@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Hindi Voice Studio</title>
+    <title>Content Creation Studio</title>
+    <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -11,7 +12,8 @@
       <header class="app-header" aria-labelledby="app-title">
         <div class="brand-block">
           <p class="eyebrow">Creator studio</p>
-          <h1 id="app-title">Hindi Voice Studio</h1>
+          <h1 id="app-title">Content Creation Studio</h1>
+          <p class="brand-subtitle">Script, voice, captions, image prompts, and stock video in one workspace.</p>
         </div>
         <div class="header-actions">
           <div class="status-pill" id="statusPill">Checking API keys</div>
@@ -21,13 +23,36 @@
       </header>
 
       <nav class="app-tabs" aria-label="Workspace navigation">
-        <button class="tab-button is-active" type="button" data-tab-target="scriptStudioPane">Script Studio</button>
+        <button class="tab-button is-active" type="button" data-tab-target="scriptStudioPane">Script</button>
         <button class="tab-button" type="button" data-tab-target="voicePane">Voice</button>
         <button class="tab-button" type="button" data-tab-target="voicePane" data-tab-action="rewrite">Rewrite</button>
-        <button class="tab-button" type="button" data-tab-target="storyboardPane">Storyboard</button>
-        <button class="tab-button" type="button" data-tab-target="memoryPane">Memory</button>
+        <button class="tab-button" type="button" data-tab-target="storyboardPane">Media</button>
+        <button class="tab-button" type="button" data-tab-target="memoryPane">Library</button>
         <button class="tab-button" type="button" data-tab-action="settings">Settings</button>
       </nav>
+
+      <section class="workflow-strip" aria-label="Production workflow">
+        <div class="workflow-step is-live" data-workflow-step="scriptStudioPane">
+          <span>01</span>
+          <strong>Script</strong>
+          <small>Research and tags</small>
+        </div>
+        <div class="workflow-step" data-workflow-step="voicePane">
+          <span>02</span>
+          <strong>Voice</strong>
+          <small>Takes and MP3</small>
+        </div>
+        <div class="workflow-step" data-workflow-step="storyboardPane">
+          <span>03</span>
+          <strong>Media</strong>
+          <small>SRT, prompts, stock</small>
+        </div>
+        <div class="workflow-step" data-workflow-step="memoryPane">
+          <span>04</span>
+          <strong>Export</strong>
+          <small>Pack and memory</small>
+        </div>
+      </section>
 
       <section class="script-studio-panel section-band tab-panel is-active" id="scriptStudioPane" data-tab-panel aria-label="Script Studio">
         <div class="section-heading">
@@ -605,6 +630,7 @@
       </form>
     </dialog>
 
+    <script src="/runtime-config.js"></script>
     <script src="/app.js" type="module"></script>
   </body>
 </html>

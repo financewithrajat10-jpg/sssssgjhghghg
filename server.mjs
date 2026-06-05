@@ -1078,6 +1078,50 @@ async function hasFfmpeg() {
   }
 }
 
+function configuredCorsOrigins() {
+  return String(process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
+function addVaryHeader(res, value) {
+  const current = res.getHeader("Vary");
+  if (!current) {
+    res.setHeader("Vary", value);
+    return;
+  }
+  const values = String(current)
+    .split(",")
+    .map((item) => item.trim().toLowerCase());
+  if (!values.includes(value.toLowerCase())) {
+    res.setHeader("Vary", `${current}, ${value}`);
+  }
+}
+
+function applyCorsHeaders(req, res) {
+  const origin = req.headers.origin;
+  if (!origin) {
+    return true;
+  }
+
+  const allowedOrigins = configuredCorsOrigins();
+  const allowedOrigin = allowedOrigins.includes("*")
+    ? "*"
+    : allowedOrigins.find((item) => item === origin);
+
+  if (!allowedOrigin) {
+    return false;
+  }
+
+  res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Max-Age", "86400");
+  addVaryHeader(res, "Origin");
+  return true;
+}
+
 function sendJson(res, status, data) {
   const body = JSON.stringify(data);
   res.writeHead(status, {
@@ -5357,6 +5401,16 @@ async function serveStatic(req, res) {
 
 const server = http.createServer((req, res) => {
   if (req.url?.startsWith("/api/")) {
+    const corsAllowed = applyCorsHeaders(req, res);
+    if (req.method === "OPTIONS") {
+      res.writeHead(corsAllowed ? 204 : 403);
+      res.end();
+      return;
+    }
+    if (!corsAllowed) {
+      sendJson(res, 403, { error: "Origin is not allowed.", code: "CORS_ORIGIN_NOT_ALLOWED" });
+      return;
+    }
     handleApi(req, res);
   } else {
     serveStatic(req, res);

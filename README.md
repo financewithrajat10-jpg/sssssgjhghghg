@@ -33,6 +33,20 @@ npm start
 
 The batch file loads `.env`, starts the local server, and opens the app.
 
+## Cloudflare Pages frontend deploy
+
+The repository includes `.github/workflows/cloudflare-pages.yml` to deploy the static frontend in `public/` to Cloudflare Pages on every push to `main`.
+
+1. Create a Cloudflare Pages project named `money-printing-machine`, or set a different project name in the GitHub repository variable `CLOUDFLARE_PAGES_PROJECT_NAME`.
+2. Add GitHub Actions secrets:
+   - `CLOUDFLARE_ACCOUNT_ID`
+   - `CLOUDFLARE_API_TOKEN`
+3. Give the Cloudflare token `Account > Cloudflare Pages > Edit` permission.
+4. If your Node API backend is hosted on a different domain, add a GitHub repository variable named `CONTENT_STUDIO_API_BASE_URL`, for example `https://your-backend.example.com`.
+5. On the backend host, set `ALLOWED_ORIGINS` to your Cloudflare Pages URL, for example `https://money-printing-machine.pages.dev`.
+
+Without `CONTENT_STUDIO_API_BASE_URL`, the deployed frontend will load but will look for `/api/*` on the same Cloudflare Pages domain.
+
 ## Controls
 
 - Provider: switch between Gemini TTS and NVIDIA TTS.

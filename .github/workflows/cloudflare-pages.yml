@@ -1,0 +1,57 @@
+name: Deploy frontend to Cloudflare Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "public/**"
+      - "server.mjs"
+      - "package.json"
+      - ".github/workflows/cloudflare-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: cloudflare-pages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PAGES_PROJECT_NAME: ${{ vars.CLOUDFLARE_PAGES_PROJECT_NAME || 'money-printing-machine' }}
+  CONTENT_STUDIO_API_BASE_URL: ${{ vars.CONTENT_STUDIO_API_BASE_URL || '' }}
+
+jobs:
+  deploy:
+    name: Deploy static frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check public/app.js
+          node --check server.mjs
+
+      - name: Write runtime frontend config
+        run: >
+          node -e "const fs = require('fs');
+          const value = String(process.env.CONTENT_STUDIO_API_BASE_URL || '').replace(/\/+$/, '');
+          fs.writeFileSync('public/runtime-config.js', 'window.CONTENT_STUDIO_API_BASE_URL = ' + JSON.stringify(value) + ';\n');"
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy public --project-name=${{ env.PAGES_PROJECT_NAME }} --branch=${{ github.ref_name }}
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
