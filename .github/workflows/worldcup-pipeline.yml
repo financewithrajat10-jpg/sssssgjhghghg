@@ -12,7 +12,7 @@ on:
       strategy:
         description: "classic or viral2"
         required: false
-        default: "classic"
+        default: "viral2"
       date:
         description: "Run date, YYYY-MM-DD"
         required: false
@@ -94,7 +94,7 @@ env:
   GEMINI_RETRY_DELAYS: ${{ vars.GEMINI_RETRY_DELAYS || '5000,10000,15000' }}
   WORLD_CUP_TOPICS: ${{ vars.WORLD_CUP_TOPICS }}
   INPUT_MODE: ${{ github.event.inputs.mode || 'pre-tournament' }}
-  INPUT_STRATEGY: ${{ github.event.inputs.strategy || vars.WORLD_CUP_STRATEGY || 'classic' }}
+  INPUT_STRATEGY: ${{ github.event.inputs.strategy || vars.WORLD_CUP_STRATEGY || 'viral2' }}
   INPUT_DATE: ${{ github.event.inputs.date || '' }}
   INPUT_MATCH_ID: ${{ github.event.inputs.match_id || '' }}
   INPUT_TEAM_A: ${{ github.event.inputs.team_a || '' }}
