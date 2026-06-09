@@ -107,12 +107,17 @@ const elements = {
   worldCupGenerateButton: document.querySelector("#worldCupGenerateButton"),
   worldCupStatus: document.querySelector("#worldCupStatus"),
   worldCupMode: document.querySelector("#worldCupMode"),
+  worldCupStrategy: document.querySelector("#worldCupStrategy"),
   worldCupDate: document.querySelector("#worldCupDate"),
   worldCupTeamA: document.querySelector("#worldCupTeamA"),
   worldCupTeamB: document.querySelector("#worldCupTeamB"),
   worldCupKickoff: document.querySelector("#worldCupKickoff"),
   worldCupDuration: document.querySelector("#worldCupDuration"),
   worldCupTopic: document.querySelector("#worldCupTopic"),
+  worldCupAssetTeam: document.querySelector("#worldCupAssetTeam"),
+  worldCupAssetPlayers: document.querySelector("#worldCupAssetPlayers"),
+  worldCupAssetPackButton: document.querySelector("#worldCupAssetPackButton"),
+  worldCupAssetPackStatus: document.querySelector("#worldCupAssetPackStatus"),
   worldCupRender: document.querySelector("#worldCupRender"),
   worldCupUpload: document.querySelector("#worldCupUpload"),
   worldCupOffline: document.querySelector("#worldCupOffline"),
@@ -2380,7 +2385,7 @@ function updateWorldCupStatus() {
     worldCup.r2Ready ? "R2 fallback ready" : "R2 fallback off",
   ];
   const schedule = Array.isArray(worldCup.scheduleHoursUtc) ? ` Schedule UTC: ${worldCup.scheduleHoursUtc.join(", ")}.` : "";
-  elements.worldCupStatus.textContent = `Pipeline: ${checks.join(" | ")}. Models: writer ${worldCup.models?.writer || "default"}, TTS ${worldCup.models?.tts || "default"}.${schedule}`;
+  elements.worldCupStatus.textContent = `Pipeline: ${checks.join(" | ")}. Strategy default: ${worldCup.strategy || "classic"}. Models: writer ${worldCup.models?.writer || "default"}, TTS ${worldCup.models?.tts || "default"}.${schedule}`;
   elements.worldCupStatus.classList.toggle("warning", !worldCup.ready || !worldCup.ffmpegReady);
 }
 
@@ -2412,6 +2417,10 @@ function renderWorldCupRuns(index = {}) {
       const warnings = (run.warnings || []).length
         ? `<div class="worldcup-warning-list">${run.warnings.map((warning) => `<span>${escapeHtml(warning)}</span>`).join("")}</div>`
         : "";
+      const viralBadge =
+        run.strategy === "viral2"
+          ? `<span>Viral ${Number(run.viralScore || 0).toFixed(0)}${run.viralTopicScore ? ` / topic ${Number(run.viralTopicScore || 0).toFixed(0)}` : ""}${run.viralDecision ? ` | ${escapeHtml(run.viralDecision)}` : ""}</span>`
+          : `<span>Classic</span>`;
       const mp4Link = run.files?.mp4 || run.r2?.publicUrl ? `<a href="${escapeHtml(worldCupAssetUrl(run, "mp4"))}" target="_blank" rel="noreferrer">MP4</a>` : "";
       const driveLink = run.drive?.folderUrl ? `<a href="${escapeHtml(run.drive.folderUrl)}" target="_blank" rel="noreferrer">Drive folder</a>` : "";
       const sidecarLinks = [
@@ -2419,6 +2428,8 @@ function renderWorldCupRuns(index = {}) {
         run.files?.srt ? `<a href="${escapeHtml(worldCupAssetUrl(run, "srt"))}" target="_blank" rel="noreferrer">SRT</a>` : "",
         run.files?.script ? `<a href="${escapeHtml(worldCupAssetUrl(run, "script"))}" target="_blank" rel="noreferrer">Script</a>` : "",
         run.files?.evidence ? `<a href="${escapeHtml(worldCupAssetUrl(run, "evidence"))}" target="_blank" rel="noreferrer">Evidence</a>` : "",
+        run.files?.viralStrategy ? `<a href="${escapeHtml(worldCupAssetUrl(run, "viralStrategy"))}" target="_blank" rel="noreferrer">Viral plan</a>` : "",
+        run.files?.quality ? `<a href="${escapeHtml(worldCupAssetUrl(run, "quality"))}" target="_blank" rel="noreferrer">QC</a>` : "",
         run.files?.visuals ? `<a href="${escapeHtml(worldCupAssetUrl(run, "visuals"))}" target="_blank" rel="noreferrer">Visuals</a>` : "",
         run.files?.attribution ? `<a href="${escapeHtml(worldCupAssetUrl(run, "attribution"))}" target="_blank" rel="noreferrer">Attribution</a>` : "",
       ]
@@ -2435,6 +2446,7 @@ function renderWorldCupRuns(index = {}) {
           </div>
           <p>${escapeHtml(run.scriptPreview || "Script preview will appear after generation.")}</p>
           <div class="worldcup-meta-row">
+            ${viralBadge}
             <span>${escapeHtml(run.selectedStyle || "style pending")}</span>
             <span>${Number(run.durationSeconds || 0).toFixed(1)}s</span>
             <span>${Number(run.srtSegments || 0)} captions</span>
@@ -2492,6 +2504,7 @@ async function generateWorldCupRunFromUi() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         type: elements.worldCupMode.value,
+        strategy: elements.worldCupStrategy?.value || "classic",
         date: elements.worldCupDate.value,
         teamA: elements.worldCupTeamA.value,
         teamB: elements.worldCupTeamB.value,
@@ -2554,6 +2567,51 @@ async function uploadWorldCupRunFromUi(runId) {
     await loadWorldCupRuns();
   } catch (error) {
     showApiError(error.payload || error, error.message || "Unable to upload World Cup short.");
+  }
+}
+
+async function buildWorldCupAssetPackFromUi() {
+  if (!elements.worldCupAssetPackButton) {
+    return;
+  }
+  const team = elements.worldCupAssetTeam.value.trim() || elements.worldCupTeamA.value.trim() || elements.worldCupTopic.value.trim();
+  if (!team) {
+    setMessage("Enter a team or topic for the asset pack.", true);
+    return;
+  }
+  elements.worldCupAssetPackButton.disabled = true;
+  elements.worldCupAssetPackButton.textContent = "Building...";
+  if (elements.worldCupAssetPackStatus) {
+    elements.worldCupAssetPackStatus.textContent = "Searching targets, reviewing images, and saving local pack assets.";
+  }
+  try {
+    const response = await apiFetch("/api/worldcup/asset-pack", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        team,
+        topic: elements.worldCupTopic.value,
+        players: elements.worldCupAssetPlayers.value,
+        offline: elements.worldCupOffline.checked,
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throwApiError(result, "Unable to build World Cup asset pack.");
+    }
+    const summary = `${result.assets?.length || 0} images saved, ${result.stockCandidates?.length || 0} stock candidates indexed.`;
+    if (elements.worldCupAssetPackStatus) {
+      elements.worldCupAssetPackStatus.textContent = `Asset pack ready: ${result.team || team}. ${summary}`;
+    }
+    setMessage(`World Cup asset pack ready: ${result.team || team}`);
+  } catch (error) {
+    if (elements.worldCupAssetPackStatus) {
+      elements.worldCupAssetPackStatus.textContent = "Asset pack failed. Check error details and try a more specific team/player list.";
+    }
+    showApiError(error.payload || error, error.message || "Unable to build World Cup asset pack.");
+  } finally {
+    elements.worldCupAssetPackButton.disabled = false;
+    elements.worldCupAssetPackButton.textContent = "Build pack";
   }
 }
 
@@ -3263,6 +3321,7 @@ elements.scriptUseButton.addEventListener("click", useScriptStudioScript);
 elements.scriptCopyButton.addEventListener("click", copyScriptStudioScript);
 elements.worldCupGenerateButton.addEventListener("click", generateWorldCupRunFromUi);
 elements.worldCupRefreshButton.addEventListener("click", loadWorldCupRuns);
+elements.worldCupAssetPackButton?.addEventListener("click", buildWorldCupAssetPackFromUi);
 elements.voiceDemosButton.addEventListener("click", generateVoiceDemos);
 elements.clearMemoryButton.addEventListener("click", async () => {
   await clearMemoryItems();

@@ -6,6 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
+  buildWorldCupAssetPack,
   generateWorldCupRun,
   listWorldCupRuns,
   readWorldCupRun,
@@ -5347,6 +5348,15 @@ async function handleApi(req, res) {
       return sendJson(res, 200, await uploadWorldCupRun(body.id, body));
     } catch (error) {
       return sendError(res, error, "Unable to upload World Cup short.");
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/worldcup/asset-pack") {
+    try {
+      const body = await readRequestJson(req);
+      return sendJson(res, 200, await buildWorldCupAssetPack(body));
+    } catch (error) {
+      return sendError(res, error, "Unable to build World Cup asset pack.");
     }
   }
 

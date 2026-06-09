@@ -9,6 +9,10 @@ on:
         description: "pre-tournament, prediction, or postmatch"
         required: false
         default: "pre-tournament"
+      strategy:
+        description: "classic or viral2"
+        required: false
+        default: "classic"
       date:
         description: "Run date, YYYY-MM-DD"
         required: false
@@ -70,6 +74,7 @@ env:
   WORLD_CUP_MAX_VIDEOS_PER_DAY: ${{ vars.WORLD_CUP_MAX_VIDEOS_PER_DAY || '3' }}
   WORLD_CUP_SCHEDULE_HOURS: ${{ vars.WORLD_CUP_SCHEDULE_HOURS || '9,15,21' }}
   WORLD_CUP_DEFAULT_LANGUAGE: ${{ vars.WORLD_CUP_DEFAULT_LANGUAGE || 'en' }}
+  WORLD_CUP_STRATEGY: ${{ vars.WORLD_CUP_STRATEGY || 'classic' }}
   WORLD_CUP_LITE_TEXT_MODEL: ${{ vars.WORLD_CUP_LITE_TEXT_MODEL || 'gemini-3.1-flash-lite' }}
   WORLD_CUP_SEARCH_MODEL: ${{ vars.WORLD_CUP_SEARCH_MODEL || 'gemini-3.1-flash-lite' }}
   WORLD_CUP_SEARCH_FALLBACK_MODELS: ${{ vars.WORLD_CUP_SEARCH_FALLBACK_MODELS || 'gemini-2.5-flash-lite,gemini-2.5-flash' }}
@@ -80,10 +85,16 @@ env:
   WORLD_CUP_AUDIO_SRT_MODEL: ${{ vars.WORLD_CUP_AUDIO_SRT_MODEL || 'gemini-3.1-flash-lite' }}
   WORLD_CUP_AUDIO_SRT_FALLBACK_MODELS: ${{ vars.WORLD_CUP_AUDIO_SRT_FALLBACK_MODELS || 'gemini-2.5-flash' }}
   WORLD_CUP_GEMINI_RETRY_DELAYS: ${{ vars.WORLD_CUP_GEMINI_RETRY_DELAYS || '5000,10000,15000' }}
+  WORLD_CUP_RESEARCH_PASSES: ${{ vars.WORLD_CUP_RESEARCH_PASSES || '4' }}
+  WORLD_CUP_ENABLE_BGM: ${{ vars.WORLD_CUP_ENABLE_BGM || 'true' }}
+  WORLD_CUP_BGM_MODE: ${{ vars.WORLD_CUP_BGM_MODE || 'auto' }}
+  WORLD_CUP_BGM_VOLUME: ${{ vars.WORLD_CUP_BGM_VOLUME || '0.08' }}
+  WORLD_CUP_BGM_FILE: ${{ vars.WORLD_CUP_BGM_FILE }}
   GEMINI_LITE_TEXT_MODEL: ${{ vars.GEMINI_LITE_TEXT_MODEL || 'gemini-3.1-flash-lite' }}
   GEMINI_RETRY_DELAYS: ${{ vars.GEMINI_RETRY_DELAYS || '5000,10000,15000' }}
   WORLD_CUP_TOPICS: ${{ vars.WORLD_CUP_TOPICS }}
   INPUT_MODE: ${{ github.event.inputs.mode || 'pre-tournament' }}
+  INPUT_STRATEGY: ${{ github.event.inputs.strategy || vars.WORLD_CUP_STRATEGY || 'classic' }}
   INPUT_DATE: ${{ github.event.inputs.date || '' }}
   INPUT_MATCH_ID: ${{ github.event.inputs.match_id || '' }}
   INPUT_TEAM_A: ${{ github.event.inputs.team_a || '' }}
@@ -126,6 +137,7 @@ jobs:
           node worldcup/cli.mjs
           --scheduled
           --mode "$INPUT_MODE"
+          --strategy "$INPUT_STRATEGY"
           --date "$INPUT_DATE"
           --match-id "$INPUT_MATCH_ID"
           --team-a "$INPUT_TEAM_A"

@@ -1349,6 +1349,28 @@ audio {
   color: #7a4d0b;
 }
 
+.asset-pack-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+}
+
+.asset-pack-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.asset-pack-head strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.95rem;
+}
+
 .worldcup-option-row,
 .worldcup-meta-row,
 .worldcup-link-row,

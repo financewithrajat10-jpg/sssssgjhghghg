@@ -109,6 +109,13 @@ The app now includes a separate `World Cup` dashboard and a standalone CLI subsy
 npm run worldcup -- --mode prediction --team-a "USA" --team-b "Brazil" --topic "why this match has trap-game energy" --render true --upload false
 ```
 
+- Compare the original baseline with the Viral 2.0 gates:
+
+```powershell
+npm run worldcup -- --mode pre-tournament --topic "Everyone thinks home advantage helps the USMNT but it might break them" --strategy classic --render false --upload false
+npm run worldcup -- --mode pre-tournament --topic "Everyone thinks home advantage helps the USMNT but it might break them" --strategy viral2 --render false --upload false
+```
+
 - Dry local test without Gemini calls:
 
 ```powershell
@@ -121,17 +128,57 @@ Pipeline stages:
 - Writes three styles: `serious_analyst`, `funny_fan_analyst`, and `dramatic_storyteller`.
 - Judges the three scripts and rewrites the winner into a Gemini TTS-ready screenplay with light tags.
 - Generates one Gemini TTS take, creates audio-aware SRT when audio is available, and falls back to script timing when needed.
-- Resolves safe visuals from Wikimedia/Wikidata, Pexels/Pixabay, and local tactical/card fallbacks.
+- Resolves safe visuals from Wikimedia/Wikidata/Commons, Pexels/Pixabay, and local tactical/card fallbacks.
+- Starts a parallel visual-scout branch after script selection so player/team images and stock clips are searched while TTS/SRT work continues.
 - Renders vertical 1080x1920 H.264/AAC MP4 with creator-yellow slide-lift captions.
+- Refuses normal MP4 export when generated TTS audio is missing, or when real image/clip coverage is below `WORLD_CUP_MIN_REAL_VISUAL_RATIO`.
 - Uploads MP4 and sidecars to Google Drive by default, or R2 when `WORLD_CUP_UPLOAD_TARGET=r2`.
 - Stores local run files under `.tmp-worldcup/`, which is ignored by Git.
+
+Viral 2.0 comparison mode:
+
+- Opt in with `--strategy viral2`, the dashboard `Strategy` dropdown, or `WORLD_CUP_STRATEGY=viral2`.
+- Keeps the classic pipeline unchanged for baseline comparison.
+- Adds a pre-writing topic score, hook lab, one-sentence contradiction, cover text, visual beat plan, caption emphasis words, and edit plan.
+- Runs the selected script through local hard gates for first-sentence hook strength, unsupported hard stats, memorable football-native line, generic tone, visual moments, and comment trigger.
+- Saves `viral-strategy.json` and, after rendering, `quality.json`.
+- Viral 2.0 renders use a louder Shorts voice chain plus post-render QC for audio level, caption gaps, visual repetition, and first-hook strength.
 
 Default World Cup models:
 
 - Text-heavy work now defaults to `gemini-3.1-flash-lite`: search/evidence, script writing, script evaluation, TTS rewrite, and audio-aware SRT.
 - Search falls back to `gemini-2.5-flash-lite` then `gemini-2.5-flash` if the Lite default is temporarily blocked.
+- Evidence now uses multiple grounded research passes, then a separate JSON consolidation pass so malformed search-grounded text does not create fake-specific stats.
+- World Cup runs keep light memory of recent topics, hooks, angles, and visual assets to reduce repeated ideas and repeated stock clips.
+- Visual selection dedupes clips within the run, avoids recently used clips where possible, uses player/team-aware queries for USMNT and other team-focused topics, and tries a backup football clip before falling back to a board.
+- Real player/team images are limited to license-tracked Wikimedia/Commons assets by default. Gemma visual review (`WORLD_CUP_VISUAL_REVIEW_MODEL`, default `gemma-4-26b-a4b-it`) performs a generic logo/watermark/off-topic/source-risk check; Gemini 2.5 Flash Lite (`WORLD_CUP_VISUAL_SELECTION_MODEL`) then reviews relevance and can request retry searches, falling back to `WORLD_CUP_VISUAL_SELECTION_FALLBACK_MODELS` on quota/server errors.
+- Local asset packs can be built from the dashboard or CLI. They save reviewed Wikimedia images under `.tmp-worldcup/asset-packs/` and index reviewed stock candidates for future runs.
+- Caption design now uses `WORLD_CUP_CAPTION_DESIGN_MODEL` to choose per-SRT emphasis words, animation style, and optional mid-screen punchline placement. Use `WORLD_CUP_CAPTION_MIDSCREEN=off` to force all captions to the bottom.
 - TTS audio stays on `gemini-3.1-flash-tts-preview` by default because TTS audio models are separate from text-out Lite models.
 - Gemini calls retry up to three times after `5s`, `10s`, and `15s` for transient network, server, high-demand, timeout, or rate-limit errors. Hard zero-quota/model-access errors fail fast so you can switch keys or models.
+- Background music is optional and defaults to a locally generated mood bed with voice ducking when `WORLD_CUP_ENABLE_BGM=true`. Set `WORLD_CUP_BGM_FILE` to use your own approved royalty-free music instead.
+- Rendered voice audio is lightly boosted/compressed by default with `WORLD_CUP_VOICE_VOLUME=1.35` so Shorts do not feel too quiet next to platform audio.
+- For local layout tests only, `--allow-silent-render true` permits a silent placeholder render and `--allow-fallback-visuals true` permits fallback-heavy visuals. Keep both off for publishable runs.
+
+Build a local asset pack:
+
+```powershell
+npm run worldcup -- --asset-pack --team "USA" --players "Christian Pulisic, Weston McKennie, Tyler Adams"
+```
+
+Build local packs for major World Cup teams:
+
+```powershell
+npm run worldcup -- --major-asset-packs --limit 6 --players-per-team 4 --stock false
+```
+
+Asset-pack discovery uses `WORLD_CUP_ASSET_SEARCH_MODEL` first, default `gemini-2.5-pro`, then falls back to the configured lower-quota models and curated team/player seeds. Production visual planning still uses both local asset packs and live online sourcing from Wikimedia/Commons, Pexels, and Pixabay.
+
+Render with mid-screen punchlines disabled:
+
+```powershell
+npm run worldcup -- --mode pre-tournament --topic "USMNT pressure test" --strategy viral2 --caption-mid-screen off --render true --upload false
+```
 
 GitHub Actions:
 
@@ -144,6 +191,7 @@ GitHub Actions:
   - `GOOGLE_DRIVE_FOLDER_ID`
 - Share that Drive folder with the service account `client_email`, giving it Editor access.
 - Optional variable: `GOOGLE_DRIVE_MAKE_PUBLIC=false`. Set to `true` only if you want generated files shared by link.
+- Optional variable: `WORLD_CUP_STRATEGY=classic` or `viral2`. Keep `classic` when you want the baseline; switch to `viral2` for the stricter viral-content gates.
 - Optional R2 fallback secrets:
   - `CLOUDFLARE_ACCOUNT_ID`
   - `CLOUDFLARE_R2_ACCESS_KEY_ID`

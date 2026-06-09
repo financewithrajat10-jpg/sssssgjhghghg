@@ -597,6 +597,13 @@
                 </select>
               </div>
               <div class="field-group">
+                <label for="worldCupStrategy">Strategy</label>
+                <select id="worldCupStrategy">
+                  <option value="classic" selected>Classic baseline</option>
+                  <option value="viral2">Viral 2.0</option>
+                </select>
+              </div>
+              <div class="field-group">
                 <label for="worldCupDate">Date</label>
                 <input id="worldCupDate" type="date" />
               </div>
@@ -623,6 +630,27 @@
               <textarea class="direction-box script-topic-box" id="worldCupTopic" placeholder="Example: why this is a trap match even if the favorite looks obvious"></textarea>
             </div>
 
+            <div class="asset-pack-panel">
+              <div class="asset-pack-head">
+                <div>
+                  <p class="eyebrow">Local asset pack</p>
+                  <strong>Team/player visuals</strong>
+                </div>
+                <button class="ghost-action-button" id="worldCupAssetPackButton" type="button">Build pack</button>
+              </div>
+              <div class="script-control-grid">
+                <div class="field-group">
+                  <label for="worldCupAssetTeam">Team/topic</label>
+                  <input id="worldCupAssetTeam" type="text" placeholder="Example: USA" />
+                </div>
+                <div class="field-group">
+                  <label for="worldCupAssetPlayers">Players</label>
+                  <input id="worldCupAssetPlayers" type="text" placeholder="Optional: Pulisic, McKennie" />
+                </div>
+              </div>
+              <p class="hint" id="worldCupAssetPackStatus">Builds a reusable local pack from reviewed Wikimedia images and stock-candidate metadata.</p>
+            </div>
+
             <div class="worldcup-option-row">
               <label class="checkbox-row">
                 <input id="worldCupRender" type="checkbox" checked />
@@ -638,7 +666,7 @@
               </label>
             </div>
 
-            <p class="hint">This uses search-grounded evidence, three script styles, a judge pass, TTS rewrite, audio-aware SRT, safe visual fallbacks, FFmpeg render, and optional Google Drive upload.</p>
+            <p class="hint">Classic keeps the original pipeline. Viral 2.0 adds topic scoring, hook lab, stricter script gates, caption emphasis, visual beat guidance, and post-render QC for comparison.</p>
           </section>
 
           <section class="worldcup-library" aria-label="Generated World Cup videos">
