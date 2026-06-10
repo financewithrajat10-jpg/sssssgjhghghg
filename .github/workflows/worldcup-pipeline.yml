@@ -144,6 +144,7 @@ jobs:
           node --check server.mjs
           node --check public/app.js
           node --check worldcup/pipeline.mjs
+          for file in worldcup/modules/*.mjs; do node --check "$file"; done
           node --check worldcup/cli.mjs
 
       - name: Run pipeline
