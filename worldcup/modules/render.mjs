@@ -1,4 +1,4 @@
-import { fs, path } from "./utils.mjs";
+import { fileExists, fs, path } from "./utils.mjs";
 import {
   AUDIO_SRT_FALLBACK_MODELS,
   AUDIO_SRT_MODEL,
@@ -232,6 +232,7 @@ import {
   visualPlanNeedsRetry,
   visualPlanRealVisualRatio,
 } from "./visuals.mjs";
+import { firstSentence, hasViralContradiction, scoreFirstThreeSecondHook } from "./script.mjs";
 
 export function stockH264Args({ preset = "veryfast", crf = "21" } = {}) {
   const gop = VIDEO_FPS * 2;

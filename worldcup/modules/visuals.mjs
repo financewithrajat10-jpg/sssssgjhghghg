@@ -1,4 +1,4 @@
-import { fs, path } from "./utils.mjs";
+import { fileExists, fs, path } from "./utils.mjs";
 import {
   AUDIO_SRT_FALLBACK_MODELS,
   AUDIO_SRT_MODEL,

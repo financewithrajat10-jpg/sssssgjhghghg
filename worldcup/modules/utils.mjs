@@ -378,6 +378,15 @@ export async function readJsonFile(filePath, fallback) {
   }
 }
 
+export async function fileExists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function getActiveGeminiKey() {
   const store = normalizeGeminiKeyStore(await readJsonFile(geminiKeyStorePath, {}));
   if (store.activeKeyId && store.activeKeyId !== "env") {
