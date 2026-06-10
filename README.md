@@ -194,9 +194,12 @@ GitHub Actions:
   - `WORLD_CUP_TELEGRAM_SEND_SIDECARS=true`
 - Optional Google Drive upload secrets:
   - `GOOGLE_SERVICE_ACCOUNT_JSON` or `GOOGLE_SERVICE_ACCOUNT_BASE64`
+  - Alternative split-secret setup: `GOOGLE_SERVICE_ACCOUNT_EMAIL` plus `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`
+  - Also accepted: `GOOGLE_CLIENT_EMAIL` plus `GOOGLE_PRIVATE_KEY`
   - `GOOGLE_DRIVE_FOLDER_ID`
 - Share that Drive folder with the service account `client_email`, giving it Editor access.
 - `GOOGLE_SERVICE_ACCOUNT_JSON` must be the full service account JSON file, not only the `private_key` value. Workspace domain-wide delegation is not required for direct service-account uploads when the folder is shared with the service account.
+- `GOOGLE_DRIVE_FOLDER_ID` must point to a Drive folder, not a file. A full folder URL is accepted.
 - Optional Drive variables:
   - `GOOGLE_DRIVE_MAKE_PUBLIC=false`. Set to `true` only if you want generated files shared by link.
   - `GOOGLE_DRIVE_SCOPE=https://www.googleapis.com/auth/drive`

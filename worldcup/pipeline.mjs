@@ -1,3 +1,4 @@
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -7,6 +8,7 @@ import { promisify } from "node:util";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.dirname(__dirname);
+loadLocalEnvFiles();
 const geminiKeyStorePath = path.join(repoRoot, ".gemini-keys.json");
 const stockKeyStorePath = path.join(repoRoot, ".stock-keys.json");
 const worldCupRoot = path.join(repoRoot, ".tmp-worldcup");
@@ -110,6 +112,32 @@ const WORLD_CUP_VOICES = [
   "Sadaltager",
   "Fenrir",
 ];
+
+function loadLocalEnvFiles() {
+  for (const fileName of [".env.local", ".env"]) {
+    const filePath = path.join(repoRoot, fileName);
+    if (!fsSync.existsSync(filePath)) {
+      continue;
+    }
+    const lines = fsSync.readFileSync(filePath, "utf8").split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) {
+        continue;
+      }
+      const equalsIndex = trimmed.indexOf("=");
+      const key = trimmed.slice(0, equalsIndex).trim();
+      let value = trimmed.slice(equalsIndex + 1).trim();
+      if (!key || process.env[key] !== undefined) {
+        continue;
+      }
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      process.env[key] = value;
+    }
+  }
+}
 
 const MAJOR_WORLD_CUP_ASSET_TARGETS = [
   { team: "USA", aliases: ["USMNT", "United States men's national soccer team"], players: ["Christian Pulisic", "Weston McKennie", "Tyler Adams", "Gio Reyna", "Sergino Dest", "Timothy Weah"] },
@@ -6655,6 +6683,26 @@ function googleDriveFolderUrl(folderId) {
   return folderId ? `https://drive.google.com/drive/folders/${encodeURIComponent(folderId)}` : "";
 }
 
+function normalizeGoogleDriveId(value) {
+  const raw = cleanText(value);
+  if (!raw) {
+    return "";
+  }
+  const patterns = [
+    /\/folders\/([^/?#]+)/i,
+    /\/file\/d\/([^/?#]+)/i,
+    /[?&]id=([^&#]+)/i,
+    /^([a-zA-Z0-9_-]{10,})$/,
+  ];
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    if (match?.[1]) {
+      return decodeURIComponent(match[1]);
+    }
+  }
+  return raw;
+}
+
 function base64Url(data) {
   return Buffer.from(data)
     .toString("base64")
@@ -6666,13 +6714,51 @@ function base64Url(data) {
 function parseGoogleServiceAccount() {
   const rawJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON || "";
   const rawBase64 = process.env.GOOGLE_SERVICE_ACCOUNT_BASE64 || process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_BASE64 || "";
-  if (rawJson.trim()) {
-    return JSON.parse(rawJson);
+  const rawJsonText = String(rawJson || "").trim();
+  if (rawJsonText) {
+    if (rawJsonText.startsWith("{")) {
+      return JSON.parse(rawJsonText);
+    }
+    const fromPrivateKey = buildGoogleServiceAccountFromParts(rawJsonText);
+    if (fromPrivateKey) {
+      return fromPrivateKey;
+    }
+    return JSON.parse(rawJsonText);
   }
-  if (rawBase64.trim()) {
-    return JSON.parse(Buffer.from(rawBase64.trim(), "base64").toString("utf8"));
+  const rawBase64Text = String(rawBase64 || "").trim();
+  if (rawBase64Text) {
+    return JSON.parse(Buffer.from(rawBase64Text, "base64").toString("utf8"));
   }
-  return null;
+  return buildGoogleServiceAccountFromParts();
+}
+
+function buildGoogleServiceAccountFromParts(privateKeyOverride = "") {
+  const privateKey = String(
+    privateKeyOverride ||
+      process.env.GOOGLE_PRIVATE_KEY ||
+      process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY ||
+      process.env.GOOGLE_DRIVE_PRIVATE_KEY ||
+      "",
+  ).trim();
+  const clientEmail = cleanText(
+    process.env.GOOGLE_CLIENT_EMAIL ||
+      process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ||
+      process.env.GOOGLE_DRIVE_CLIENT_EMAIL ||
+      process.env.GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL ||
+      "",
+  );
+  if (!privateKey || !clientEmail) {
+    return null;
+  }
+  return {
+    type: "service_account",
+    project_id: cleanText(process.env.GOOGLE_PROJECT_ID || process.env.GOOGLE_SERVICE_ACCOUNT_PROJECT_ID || ""),
+    private_key_id: cleanText(process.env.GOOGLE_PRIVATE_KEY_ID || process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY_ID || ""),
+    private_key: privateKey.replace(/\\n/g, "\n"),
+    client_email: clientEmail,
+    client_id: cleanText(process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_SERVICE_ACCOUNT_CLIENT_ID || ""),
+    token_uri: cleanText(process.env.GOOGLE_TOKEN_URI || process.env.GOOGLE_SERVICE_ACCOUNT_TOKEN_URI || "https://oauth2.googleapis.com/token"),
+  };
 }
 
 function googleDriveSetupHint() {
@@ -6828,6 +6914,36 @@ async function getOrCreateDriveFolder(name, parentId) {
       parents: parentId ? [parentId] : undefined,
     }),
   });
+}
+
+async function assertGoogleDriveRootFolder(folderId) {
+  const safeFolderId = normalizeGoogleDriveId(folderId);
+  if (!safeFolderId) {
+    throw new WorldCupError("Missing GOOGLE_DRIVE_FOLDER_ID for World Cup Google Drive uploads.", {
+      status: 400,
+      code: "MISSING_GOOGLE_DRIVE_FOLDER_ID",
+      details: { setupHint: googleDriveSetupHint() },
+    });
+  }
+  const folder = await driveRequest(`/drive/v3/files/${encodeURIComponent(safeFolderId)}`, {
+    query: {
+      fields: "id,name,mimeType,webViewLink",
+      supportsAllDrives: "true",
+    },
+  });
+  if (folder.mimeType !== "application/vnd.google-apps.folder") {
+    throw new WorldCupError("GOOGLE_DRIVE_FOLDER_ID points to a Drive file, not a folder.", {
+      status: 400,
+      code: "GOOGLE_DRIVE_ROOT_NOT_FOLDER",
+      details: {
+        id: folder.id,
+        name: folder.name,
+        mimeType: folder.mimeType,
+        setupHint: "Use the ID from a Google Drive folder URL like https://drive.google.com/drive/folders/<folder-id>, then share that folder with the service account as Editor.",
+      },
+    });
+  }
+  return folder;
 }
 
 async function uploadGoogleDriveFile({ folderId, name, body, contentType }) {
@@ -7148,7 +7264,7 @@ async function uploadWorldCupRunToR2(id) {
 
 async function uploadWorldCupRunToDrive(id) {
   const run = await readWorldCupRun(id);
-  const rootFolderId = cleanText(process.env.GOOGLE_DRIVE_FOLDER_ID || process.env.WORLD_CUP_GOOGLE_DRIVE_FOLDER_ID || "");
+  const rootFolderId = normalizeGoogleDriveId(process.env.GOOGLE_DRIVE_FOLDER_ID || process.env.WORLD_CUP_GOOGLE_DRIVE_FOLDER_ID || "");
   if (!rootFolderId) {
     throw new WorldCupError("Missing GOOGLE_DRIVE_FOLDER_ID for World Cup Google Drive uploads.", {
       status: 400,
@@ -7159,7 +7275,8 @@ async function uploadWorldCupRunToDrive(id) {
 
   const runDir = path.join(runsRoot, run.id);
   const { date, matchSlug } = driveBaseParts(run);
-  const worldcupFolder = await getOrCreateDriveFolder("worldcup", rootFolderId);
+  const rootFolder = await assertGoogleDriveRootFolder(rootFolderId);
+  const worldcupFolder = await getOrCreateDriveFolder("worldcup", rootFolder.id);
   const dateFolder = await getOrCreateDriveFolder(date, worldcupFolder.id);
   const matchFolder = await getOrCreateDriveFolder(matchSlug, dateFolder.id);
   const uploaded = [];
@@ -7219,7 +7336,7 @@ async function uploadWorldCupRunToDrive(id) {
   run.drive = {
     folderId: matchFolder.id,
     folderUrl: matchFolder.webViewLink || googleDriveFolderUrl(matchFolder.id),
-    rootFolderId,
+    rootFolderId: rootFolder.id,
     uploadedAt: nowIso(),
     uploaded,
   };
