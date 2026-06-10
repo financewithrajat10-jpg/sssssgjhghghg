@@ -58,7 +58,7 @@ const WORLD_CUP_ASSET_SEARCH_FALLBACK_MODELS = String(process.env.WORLD_CUP_ASSE
   .split(",")
   .map((model) => model.trim())
   .filter(Boolean);
-const WORLD_CUP_CAPTION_MIDSCREEN = cleanText(process.env.WORLD_CUP_CAPTION_MIDSCREEN || "auto").toLowerCase();
+const WORLD_CUP_CAPTION_MIDSCREEN = cleanText(process.env.WORLD_CUP_CAPTION_MIDSCREEN || "off").toLowerCase();
 const WORLD_CUP_VISUAL_RETRY_ATTEMPTS = Math.max(0, Math.min(4, Number(process.env.WORLD_CUP_VISUAL_RETRY_ATTEMPTS || 2) || 2));
 const GEMINI_REQUEST_TIMEOUT_MS = Math.max(30000, Number(process.env.WORLD_CUP_GEMINI_REQUEST_TIMEOUT_MS || 120000) || 120000);
 const MEDIA_REQUEST_TIMEOUT_MS = Math.max(5000, Number(process.env.WORLD_CUP_MEDIA_REQUEST_TIMEOUT_MS || 20000) || 20000);
@@ -240,6 +240,14 @@ function cleanText(value) {
     .replace(/Â/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function cleanInputText(value) {
+  if (value === true || value === false || value === null || value === undefined) {
+    return "";
+  }
+  const cleaned = cleanText(value);
+  return /^(?:true|false|null|undefined)$/i.test(cleaned) ? "" : cleaned;
 }
 
 function repairCommonMojibake(value) {
@@ -949,8 +957,41 @@ function assTimestamp(seconds) {
   return `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
 }
 
+function normalizeTimedCaptionSegments(rawSegments = []) {
+  const sorted = (Array.isArray(rawSegments) ? rawSegments : [])
+    .map((segment, index) => {
+      const startTime = Math.max(0, Number(segment.startTime ?? segment.start ?? 0) || 0);
+      const endTime = Math.max(startTime + 0.45, Number(segment.endTime ?? segment.end ?? startTime + 1.8) || startTime + 1.8);
+      const text = normalizeFootballCaptionText(segment.text || segment.caption || segment.line || "");
+      return text ? { ...segment, number: index + 1, startTime, endTime, durationSeconds: endTime - startTime, text } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.startTime - b.startTime);
+  let previousEnd = 0;
+  return sorted.map((segment, index) => {
+    const nextStart = sorted[index + 1]?.startTime;
+    const startTime = Math.max(index === 0 ? 0 : previousEnd + 0.03, Number(segment.startTime) || 0);
+    let endTime = Math.max(startTime + 0.45, Number(segment.endTime) || startTime + 1.8);
+    if (Number.isFinite(nextStart) && nextStart > startTime) {
+      endTime = Math.min(endTime, Math.max(startTime + 0.45, nextStart - 0.03));
+    }
+    endTime = Math.min(endTime, startTime + 5.8);
+    if (endTime <= startTime + 0.3) {
+      endTime = startTime + 0.45;
+    }
+    previousEnd = endTime;
+    return {
+      ...segment,
+      number: index + 1,
+      startTime,
+      endTime,
+      durationSeconds: endTime - startTime,
+    };
+  });
+}
+
 function buildSrt(segments) {
-  return (Array.isArray(segments) ? segments : [])
+  return normalizeTimedCaptionSegments(segments)
     .map((segment, index) => {
       const text = cleanText(segment.text || segment.caption || segment.line);
       return text ? `${index + 1}\n${srtTimestamp(segment.startTime)} --> ${srtTimestamp(segment.endTime)}\n${text}` : "";
@@ -969,7 +1010,7 @@ function parseSrtTimestamp(value) {
 }
 
 function parseSrtSegments(srtText) {
-  return String(srtText || "")
+  const segments = String(srtText || "")
     .replace(/\r/g, "")
     .split(/\n{2,}/)
     .map((block, index) => {
@@ -991,6 +1032,7 @@ function parseSrtSegments(srtText) {
       return { number: index + 1, startTime, endTime, durationSeconds: endTime - startTime, text };
     })
     .filter(Boolean);
+  return normalizeTimedCaptionSegments(segments);
 }
 
 function normalizeFootballCaptionText(text) {
@@ -1043,7 +1085,8 @@ function estimateSrtFromText(text, durationSeconds = 0) {
   for (const segment of segments) {
     segment.text = normalizeFootballCaptionText(segment.text);
   }
-  return { segments, srt: buildSrt(segments), source: "estimated-from-script" };
+  const normalizedSegments = normalizeTimedCaptionSegments(segments);
+  return { segments: normalizedSegments, srt: buildSrt(normalizedSegments), source: "estimated-from-script" };
 }
 
 async function generateAudioAwareSrt({ keyInfo, audioBase64, mimeType, screenplay, durationSeconds, warnings }) {
@@ -1082,14 +1125,16 @@ Return:
       ],
     });
     const rawSegments = Array.isArray(result.json?.segments) ? result.json.segments : [];
-    const segments = rawSegments
+    const segments = normalizeTimedCaptionSegments(
+      rawSegments
       .map((segment, index) => {
         const startTime = Math.max(0, Number(segment.startTime ?? segment.start ?? 0) || 0);
         const endTime = Math.max(startTime + 0.5, Number(segment.endTime ?? segment.end ?? startTime + 2) || startTime + 2);
         const text = normalizeFootballCaptionText(segment.text || segment.caption || "");
         return text ? { number: index + 1, startTime, endTime, durationSeconds: endTime - startTime, text } : null;
       })
-      .filter(Boolean);
+      .filter(Boolean),
+    );
     if (!segments.length) {
       throw new Error("No valid SRT segments returned.");
     }
@@ -1150,7 +1195,7 @@ function captionPresetDesignConfig(preset = WORLD_CUP_CAPTION_PRESET) {
 }
 
 function localCaptionDesign({ segments, screenplay, options }) {
-  const midMode = cleanText(options.captionMidScreen || WORLD_CUP_CAPTION_MIDSCREEN || "auto").toLowerCase();
+  const midMode = cleanText(options.captionMidScreen || WORLD_CUP_CAPTION_MIDSCREEN || "off").toLowerCase();
   const preset = captionPresetDesignConfig(options.captionPreset || WORLD_CUP_CAPTION_PRESET);
   const powerWords = [
     "pressure",
@@ -1215,7 +1260,7 @@ function localCaptionDesign({ segments, screenplay, options }) {
 }
 
 function normalizeCaptionDesign(raw, fallback, options) {
-  const midMode = cleanText(options.captionMidScreen || WORLD_CUP_CAPTION_MIDSCREEN || "auto").toLowerCase();
+  const midMode = cleanText(options.captionMidScreen || WORLD_CUP_CAPTION_MIDSCREEN || "off").toLowerCase();
   const allowMiddle = midMode !== "off";
   const preset = captionPresetDesignConfig(options.captionPreset || raw?.style || fallback.style || WORLD_CUP_CAPTION_PRESET);
   let middleCount = 0;
@@ -1272,7 +1317,7 @@ async function designWorldCupCaptions({ keyInfo, segments, screenplay, selectedS
   if (!options.captionDesign || !keyInfo?.apiKey || options.offline || !segments.length) {
     return fallback;
   }
-  const midMode = cleanText(options.captionMidScreen || WORLD_CUP_CAPTION_MIDSCREEN || "auto").toLowerCase();
+  const midMode = cleanText(options.captionMidScreen || WORLD_CUP_CAPTION_MIDSCREEN || "off").toLowerCase();
   const preset = captionPresetDesignConfig(options.captionPreset || WORLD_CUP_CAPTION_PRESET);
   const prompt = `
 You are Gemma caption director for viral football Shorts.
@@ -1342,12 +1387,12 @@ Return JSON only:
 function normalizeWorldCupInput(input = {}) {
   const type = String(input.type || input.mode || "pre-tournament").trim().toLowerCase();
   const strategy = normalizeWorldCupStrategy(input.strategy || input.contentStrategy || DEFAULT_WORLD_CUP_STRATEGY);
-  const teamA = cleanText(input.teamA || input.team_a || input.match?.teamA || input.match?.homeTeam || "");
-  const teamB = cleanText(input.teamB || input.team_b || input.match?.teamB || input.match?.awayTeam || "");
-  const date = cleanText(input.date || input.match?.date || todayDate()).slice(0, 10);
-  const matchId = cleanText(input.matchId || input.match_id || input.match?.id || "");
+  const teamA = cleanInputText(input.teamA || input.team_a || input.match?.teamA || input.match?.homeTeam || "");
+  const teamB = cleanInputText(input.teamB || input.team_b || input.match?.teamB || input.match?.awayTeam || "");
+  const date = (cleanInputText(input.date || input.match?.date || "") || todayDate()).slice(0, 10);
+  const matchId = cleanInputText(input.matchId || input.match_id || input.match?.id || "");
   const topic =
-    cleanText(input.topic) ||
+    cleanInputText(input.topic) ||
     (teamA && teamB ? `${teamA} vs ${teamB} ${type === "postmatch" ? "post-match analysis" : "prediction"}` : "World Cup chaos storylines to watch");
   const matchSlug = teamA && teamB ? `${slugify(teamA)}-vs-${slugify(teamB)}` : slugify(topic, "world-cup-topic");
   const runType = ["prediction", "postmatch", "pre-tournament"].includes(type) ? type : teamA && teamB ? "prediction" : "pre-tournament";
@@ -1362,25 +1407,25 @@ function normalizeWorldCupInput(input = {}) {
     match: {
       id: matchId || hashText(`${date}:${teamA}:${teamB}:${topic}`),
       date,
-      kickoff: cleanText(input.kickoff || input.match?.kickoff || ""),
+      kickoff: cleanInputText(input.kickoff || input.match?.kickoff || ""),
       teamA,
       teamB,
-      competition: cleanText(input.competition || input.match?.competition || "FIFA World Cup 2026"),
-      venue: cleanText(input.venue || input.match?.venue || ""),
+      competition: cleanInputText(input.competition || input.match?.competition || "") || "FIFA World Cup 2026",
+      venue: cleanInputText(input.venue || input.match?.venue || ""),
     },
-    audience: cleanText(input.audience || "US, Europe, and South America football fans"),
-    language: cleanText(input.language || DEFAULT_LANGUAGE),
+    audience: cleanInputText(input.audience) || "US, Europe, and South America football fans",
+    language: cleanInputText(input.language) || DEFAULT_LANGUAGE,
     render: normalizeBool(input.render, false),
     upload: normalizeBool(input.upload, false),
     offline: normalizeBool(input.offline, false),
     generateAudio: normalizeBool(input.generateAudio, true),
-    source: cleanText(input.source || "auto"),
+    source: cleanInputText(input.source) || "auto",
     bgm: normalizeBool(input.bgm ?? input.backgroundMusic, WORLD_CUP_ENABLE_BGM),
-    bgmFile: cleanText(input.bgmFile || input.backgroundMusicFile || WORLD_CUP_BGM_FILE),
-    bgmMode: cleanText(input.bgmMode || WORLD_CUP_BGM_MODE || "auto").toLowerCase(),
+    bgmFile: cleanInputText(input.bgmFile || input.backgroundMusicFile || WORLD_CUP_BGM_FILE),
+    bgmMode: (cleanInputText(input.bgmMode) || WORLD_CUP_BGM_MODE || "auto").toLowerCase(),
     bgmPreset: normalizeWorldCupBgmPreset(input.bgmPreset || input.musicPreset || WORLD_CUP_BGM_PRESET),
     bgmVolume: Math.min(0.35, Math.max(0.02, Number(input.bgmVolume || WORLD_CUP_BGM_VOLUME) || WORLD_CUP_BGM_VOLUME)),
-    captionMidScreen: cleanText(input.captionMidScreen || input.midScreenCaptions || WORLD_CUP_CAPTION_MIDSCREEN || "auto").toLowerCase(),
+    captionMidScreen: (cleanInputText(input.captionMidScreen || input.midScreenCaptions) || WORLD_CUP_CAPTION_MIDSCREEN || "off").toLowerCase(),
     captionPreset: normalizeWorldCupCaptionPreset(input.captionPreset || input.captionStyle || WORLD_CUP_CAPTION_PRESET),
     captionDesign: normalizeBool(input.captionDesign ?? input.smartCaptions, true),
     commentaryText: String(input.commentaryText || ""),
@@ -1547,7 +1592,12 @@ async function loadWorldCupMemory({ excludeId = "", limit = 10 } = {}) {
   runs.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   const recentRuns = runs.slice(0, limit);
   const visualAssetIds = [];
+  const memorableLines = [];
   for (const run of recentRuns) {
+    const memorable = cleanText(run.selectedScript?.memorableLine || run.selectedScript?.joke || "");
+    if (memorable) {
+      memorableLines.push(memorable);
+    }
     for (const segment of run.visualPlan?.segments || []) {
       const id = segment.selectedClip?.id || segment.selectedImage?.id || "";
       if (id) {
@@ -1565,12 +1615,13 @@ async function loadWorldCupMemory({ excludeId = "", limit = 10 } = {}) {
       .map((run) => cleanText(run.selectedScript?.title || run.selectedScript?.opinion || ""))
       .filter(Boolean)
       .slice(0, limit),
+    recentMemorableLines: [...new Set(memorableLines)].slice(0, limit),
     visualAssetIds: [...new Set(visualAssetIds)].slice(0, 80),
   };
 }
 
 function memoryPrompt(memory) {
-  if (!memory?.recentTopics?.length && !memory?.recentHooks?.length) {
+  if (!memory?.recentTopics?.length && !memory?.recentHooks?.length && !memory?.recentMemorableLines?.length) {
     return "No previous World Cup run memory available.";
   }
   return `
@@ -1578,6 +1629,7 @@ Recent World Cup pipeline memory:
 - Avoid repeating topics: ${memory.recentTopics.slice(0, 8).join(" | ") || "none"}
 - Avoid repeating hooks: ${memory.recentHooks.slice(0, 8).join(" | ") || "none"}
 - Avoid repeating angles: ${memory.recentAngles.slice(0, 8).join(" | ") || "none"}
+- Avoid repeating joke/quote lines: ${(memory.recentMemorableLines || []).slice(0, 8).join(" | ") || "none"}
 `.trim();
 }
 
@@ -1597,6 +1649,22 @@ function hasMemorableFootballLine(text) {
   return /\b(group chat|comment section|panic button|football court|football jail|receipts|cooked|career mode|aura|fraud watch|chaos|rent is due|trap game|pressure cooker|spreadsheet|restart button|playing the noise|crowd a trap|home advantage is cute)\b/i.test(cleanText(text));
 }
 
+const FOOTBALL_JOKE_LINES = [
+  "Home advantage is cute until your own fans start sounding like the comment section.",
+  "The crowd is an extra man until it opens the group chat.",
+  "This is career mode with no restart button.",
+  "The panic button is already warm.",
+  "Football logic walked in with a spreadsheet and left with a headache.",
+  "The group chat is about to become a courtroom.",
+  "That first bad touch can turn hope into audit mode.",
+  "The vibes are wearing boots, but the receipts are holding the whistle.",
+];
+
+function footballJokeLine(seed = "") {
+  const hash = createHash("sha256").update(cleanText(seed) || "world-cup").digest();
+  return FOOTBALL_JOKE_LINES[hash[0] % FOOTBALL_JOKE_LINES.length];
+}
+
 function firstThreeSecondHook(text) {
   const words = cleanText(text).split(/\s+/).filter(Boolean);
   return words.slice(0, 16).join(" ");
@@ -1606,7 +1674,12 @@ function scoreFirstThreeSecondHook(text, evidence = {}) {
   const hook = firstThreeSecondHook(text);
   const evidenceText = cleanText(`${evidence.topic || ""} ${evidence.match?.teamA || ""} ${evidence.match?.teamB || ""} ${JSON.stringify(evidence.keyPlayers || [])}`);
   const combined = `${hook} ${evidenceText}`;
-  const concrete = /\b(usmnt|usa|united states|mexico|brazil|argentina|france|spain|england|germany|portugal|messi|ronaldo|mbappe|pulisic|neymar)\b/i.test(combined);
+  const hasSpecificTarget = /\b(usmnt|usa|united states|mexico|brazil|argentina|france|spain|england|germany|portugal|messi|ronaldo|mbappe|pulisic|neymar)\b/i.test(combined);
+  const hasEvidenceTarget =
+    Boolean(cleanText(`${evidence.match?.teamA || ""} ${evidence.match?.teamB || ""}`)) ||
+    (Array.isArray(evidence.keyPlayers) && evidence.keyPlayers.some((player) => cleanText(player?.name || player)));
+  const genericWorldCupTarget = /\bworld cup\b/i.test(hook) && !hasEvidenceTarget;
+  const concrete = hasSpecificTarget || genericWorldCupTarget;
   const stakes = /\b(pressure|trap|danger|break|wrong|panic|end|risk|host|home|chaos|favorite|upset|crowd|warning|red flag|blueprint|exploit|holes|loss|signs|isn'?t ready|not ready|unprepared|fragile|belongs?)\b/i.test(hook);
   const curiosity = /\b(but|actually|why|nobody|real|blueprint|warning|wake-up|one stat|one thing|not|isn'?t|aren'?t|can'?t|won'?t|instead|hot take|contrarian)\b/i.test(hook);
   const shortEnough = hook.length <= 125;
@@ -1687,9 +1760,21 @@ function localViralHookLab({ evidence, options, topicScore }) {
   const isUsa = /usa|usmnt|united states/i.test(`${label} ${names.topic}`);
   const opponent = names.teams.find((team) => !/usa|usmnt|united states/i.test(team)) || "the opponent";
   const pressureTarget = isUsa ? "the USMNT" : label;
+  const topicText = cleanText(`${label} ${names.topic}`).toLowerCase();
+  const topicContradiction = /legacy|last dance|one more/i.test(topicText)
+    ? `Everyone wants the fairy-tale World Cup ending. I think the bracket might be the villain.`
+    : /host nation|host nations|home|host/i.test(topicText) && /pressure/i.test(topicText)
+      ? `Everyone talks about host-nation advantage. I think one host is carrying the loudest pressure.`
+    : /chaos|upset|trap/i.test(topicText)
+      ? `Everyone wants a clean World Cup favorite. I think the chaos team is hiding in plain sight.`
+      : /fraud|aura/i.test(topicText)
+        ? `Everyone is arguing aura. I think the receipts are about to be much funnier.`
+        : /midfield|press/i.test(topicText)
+          ? `Everyone watches the stars. I think the midfield panic decides the whole story.`
+          : `Everyone thinks ${label} is about the obvious favorite. I think the real danger is pressure.`;
   const contradiction = isUsa
     ? `Everyone thinks home advantage helps ${pressureTarget}. I think it might break them.`
-    : `Everyone thinks ${label} is about the obvious favorite. I think the real danger is pressure.`;
+    : topicContradiction;
   const hooks = isUsa
     ? [
         `Everyone thinks home advantage helps the USMNT. I think it might break them.`,
@@ -1699,6 +1784,7 @@ function localViralHookLab({ evidence, options, topicScore }) {
         `I am going contrarian on the USMNT. The crowd might be the real opponent.`,
       ]
     : [
+        contradiction,
         `Everyone thinks ${label} is simple. That is exactly why it feels dangerous.`,
         `The obvious World Cup pick is usually where football sets the trap.`,
         `This matchup has group-chat chaos written all over it.`,
@@ -2095,16 +2181,18 @@ function fallbackScripts(evidence, viralStrategy = null) {
   if (viralStrategy?.version === "viral2") {
     const contradiction = cleanText(viralStrategy.oneSentenceContradiction) || `Everyone thinks ${matchName} is simple. I think the pressure says otherwise.`;
     const coverText = cleanText(viralStrategy.coverText) || "TRAP GAME ALERT";
+    const firstJoke = footballJokeLine(`${matchName}:contrarian`);
+    const softJoke = footballJokeLine(`${matchName}:soft`);
     return [
       {
         styleId: "viral2_contrarian_friend",
         title: coverText,
         hookType: "contradiction",
-        text: `${contradiction} Because the useful clue is not the bigger badge. It is who plays normal football when the noise gets stupid. Home advantage is cute until your own fans start sounding like the comment section. My pick is the team that can stay boring for five minutes longer. Am I overthinking this, or is pressure the real opponent?`,
+        text: `${contradiction} Because the useful clue is not the bigger badge. It is who plays normal football when the noise gets stupid. ${firstJoke} My pick is the team that can stay boring for five minutes longer. Am I overthinking this, or is pressure the real opponent?`,
         dataPoint,
         opinion: "Pressure can matter more than reputation in the first World Cup beat.",
-        joke: "the group chat turns into a courtroom",
-        memorableLine: "Home advantage is cute until your own fans start sounding like the comment section.",
+        joke: firstJoke,
+        memorableLine: firstJoke,
         commentTrigger: "Am I overthinking this, or is pressure the real opponent?",
         coverText,
         visualMoments: ["first-frame contradiction", "crowd pressure", "tactical panic card", "comment courtroom gag"],
@@ -2126,11 +2214,11 @@ function fallbackScripts(evidence, viralStrategy = null) {
         styleId: "viral2_soft_analyst",
         title: viralStrategy.titleIdeas?.[2] || coverText,
         hookType: "risk",
-        text: `${contradiction} That does not mean they are bad. It means the first ugly spell matters. Crowds can lift you, but they can also make every simple pass feel like a referendum. One bad pass and suddenly everyone has a coaching license. If this goes wrong, the opponent may not beat them first. The moment might. Agree or am I too cynical?`,
+        text: `${contradiction} That does not mean they are bad. It means the first ugly spell matters. Crowds can lift you, but they can also make every simple pass feel like a referendum. ${softJoke} If this goes wrong, the opponent may not beat them first. The moment might. Agree or am I too cynical?`,
         dataPoint,
         opinion: "The risk is emotional speed, not talent.",
         joke: "every simple pass feels like a referendum",
-        memorableLine: "One bad pass and suddenly everyone has a coaching license.",
+        memorableLine: softJoke,
         commentTrigger: "Agree or am I too cynical?",
         coverText,
         visualMoments: ["crowd lift", "simple pass pressure", "noise graphic", "agree/disagree end card"],
@@ -2281,7 +2369,7 @@ ${(viralStrategy.editPlan || []).map((step) => `  - ${step}`).join("\n") || "  -
 - Prefer concrete fan language over abstract tactical poetry.
 - Prefer playful anxiety over doom. The voice should feel like a smart friend joking through nerves.
 - Use Classic-style lines like "panic button", "career mode with no restart button", "group chat courtroom", "souffle during an earthquake", or "football court hearing".
-- Creator line lab. Every script MUST contain one line with this exact level of casual fan truth:
+- Creator line lab. Every script MUST contain one fresh line with this level of casual fan truth. Do not repeat a line from recent memory:
   "Home advantage is cute until your own fans start sounding like the comment section."
   You may adapt it to the topic, but it must be short, funny, and instantly quotable.
 - Do not use harsh pundit phrases like "national humiliation", "psychological death trap", "sucker's bet", "delusional", "glass cannon", "destined to break", "crushed", "failure", "disaster", "meltdown", "collapse", "choke", "fold", or "crisis".
@@ -2327,7 +2415,8 @@ Required in every script:
   "Home advantage is cute until your own fans start sounding like the comment section."
   "The crowd is an extra man until it opens the group chat."
   "This is career mode with no restart button."
-  "One bad pass and suddenly everyone has a coaching license."
+  "The panic button is already warm."
+  "The group chat is about to become a courtroom."
 - one ending that makes comments likely
 - a human voice rhythm: short sentences, natural contractions, question beats, and room for pitch changes
 - one first-frame cover text idea in the title or hook language, such as "HOME ADVANTAGE TRAP" or "USMNT PANIC MODE"
@@ -2422,7 +2511,7 @@ Return JSON:
 function heuristicScriptScore(script) {
   const text = script.text || "";
   const words = text.split(/\s+/).filter(Boolean);
-  const hasJoke = /court|jail|rent|panic|group chat|comment section|coaching license|receipts|chaos|aura|cooked|oops|hype|almost|spreadsheet|laptop|ferrari|roundabout|restart button/i.test(text);
+  const hasJoke = /court|jail|rent|panic|group chat|comment section|receipts|chaos|aura|cooked|oops|hype|almost|spreadsheet|laptop|ferrari|roundabout|restart button|headache|audit mode|whistle/i.test(text);
   const hasQuestion = /\?/.test(text) || /comments|tell me|who|what/i.test(text);
   const notTooLong = words.length >= 75 && words.length <= 120;
   const tooHeavy = /absolute failure|funeral march|silent killer|crumble|melt|disaster|meltdown|crisis|collapse|choke|fold/i.test(text);
@@ -2458,7 +2547,7 @@ function scoreViral2Script(script, evidence, viralStrategy = {}) {
   const dimensions = {
     hook: hasViralContradiction(opening) && opening.length <= 115 ? 18 : hasViralContradiction(opening) ? 14 : 7,
     clarity: words.length >= 65 && words.length <= 118 ? 12 : words.length <= 130 ? 9 : 5,
-    personality: hasMemorableFootballLine(`${text} ${script?.memorableLine || ""}`) ? 15 : /panic|trap|chaos|pressure|comment|court|jail|career mode|coaching license/i.test(text) ? 10 : 4,
+    personality: hasMemorableFootballLine(`${text} ${script?.memorableLine || ""}`) ? 15 : /panic|trap|chaos|pressure|comment|court|jail|career mode|group chat|restart button/i.test(text) ? 10 : 4,
     retention: /\b(because|the scary part|the clue|that means|suddenly|so i)\b/i.test(text) ? 12 : 7,
     comment: hasQuestion ? 13 : 5,
     evidence: unsupportedHardStat ? 0 : evidenceWeak ? 7 : 12,
@@ -2514,11 +2603,26 @@ function hardenedOpeningForEvidence(evidence = {}, viralStrategy = {}) {
   if (/usmnt|usa|united states/.test(text) && /home|host|pressure/.test(text)) {
     return "Home advantage might be the USMNT's biggest trap, not their biggest weapon.";
   }
+  if (/legacy|last dance|one more/.test(text)) {
+    return "The World Cup fairy tale everyone wants might have the ugliest bracket problem.";
+  }
+  if (/host nation|host nations|home|host/.test(text) && /pressure/.test(text)) {
+    return "The World Cup host with the loudest crowd might also have the heaviest problem.";
+  }
+  if (/fraud|aura/.test(text)) {
+    return "World Cup aura debates are fun until the receipts start acting rude.";
+  }
+  if (/chaos|upset|trap/.test(text)) {
+    return "The World Cup chaos team nobody wants is probably hiding in plain sight.";
+  }
+  if (/midfield|press|pressure/.test(text)) {
+    return "Everyone watches the World Cup stars, but the midfield panic usually writes the ending.";
+  }
   const strategyHook = (Array.isArray(viralStrategy?.hooks) ? viralStrategy.hooks : []).find((hook) => {
     const scored = scoreFirstThreeSecondHook(hook, evidence);
     return scored.decision === "pass" && !/^(is|are|can|could|do|does|did|will|would|should|what|why|how)\b/i.test(cleanText(hook));
   });
-  return strategyHook || "The obvious World Cup story is hiding the real pressure point.";
+  return strategyHook || "The World Cup take everyone likes is hiding the part fans will argue about.";
 }
 
 function hardenViralOpening(script, evidence = {}, viralStrategy = {}, warnings = []) {
@@ -2696,13 +2800,14 @@ function repairScriptPromiseContract(script = {}, evidence = {}, viralStrategy =
   const subject = scriptPromiseSubject(evidence, contract);
   const itemLines = items.map((item, index) => labelPromiseItem(item, index, contract.noun));
   const countWord = contract.count === 2 ? "two" : contract.count === 3 ? "three" : String(contract.count);
+  const repairJoke = footballJokeLine(`${subject}:${contract.noun}:${items.join("|")}`);
   const text = cleanText([
     promiseRepairOpening(subject, contract),
     `Here are ${countWord} ${contract.noun}: ${itemLines.join(". ")}.`,
     contract.count === 3 && /messi|ronaldo/i.test(`${subject} ${items.join(" ")}`)
       ? "That is not nostalgia, it is bracket chaos with feelings."
       : "That is why this is not just a prediction, it is pressure math with feelings.",
-    "One bad pass and suddenly everyone has a coaching license.",
+    repairJoke,
     "Which timeline are you betting on?",
   ].join(" "));
   const repaired = polishScriptForShorts({
@@ -2711,8 +2816,8 @@ function repairScriptPromiseContract(script = {}, evidence = {}, viralStrategy =
     text,
     dataPoint: cleanText(script.dataPoint || "The story depends on bracket path and pressure, not a guaranteed result."),
     opinion: cleanText(script.opinion || "The funniest outcome is not always the most likely one, but it is the one fans will argue about."),
-    joke: "One bad pass and suddenly everyone has a coaching license.",
-    memorableLine: "One bad pass and suddenly everyone has a coaching license.",
+    joke: repairJoke,
+    memorableLine: repairJoke,
     commentTrigger: "Which timeline are you betting on?",
     coverText: cleanText(script.coverText || `${contract.count} ${contract.noun.toUpperCase()}`),
     visualMoments: [
@@ -2758,7 +2863,8 @@ Keep:
 - The rewritten script MUST include one quotable creator line in this style:
   "Home advantage is cute until your own fans start sounding like the comment section."
   "The crowd is an extra man until it opens the group chat."
-  "One bad pass and suddenly everyone has a coaching license."
+  "The panic button is already warm."
+  "The group chat is about to become a courtroom."
 
 Use this hook lab if useful:
 ${JSON.stringify(viralStrategy, null, 2)}
@@ -2829,7 +2935,8 @@ Reward pitch-friendly writing: short sentences, playful questions, pauses before
 Strongly penalize scripts that do not contain one quotable creator/fan line like:
 - "Home advantage is cute until your own fans start sounding like the comment section."
 - "The crowd is an extra man until it opens the group chat."
-- "One bad pass and suddenly everyone has a coaching license."
+- "The panic button is already warm."
+- "The group chat is about to become a courtroom."
 
 Evidence:
 ${JSON.stringify(evidence, null, 2)}
@@ -2909,7 +3016,8 @@ If evidence is weak, remove hard stats and frame the argument as opinion or pres
 Keep or add one quotable creator-native line in the actual script, like:
 - "Home advantage is cute until your own fans start sounding like the comment section."
 - "The crowd is an extra man until it opens the group chat."
-- "One bad pass and suddenly everyone has a coaching license."
+- "The panic button is already warm."
+- "The group chat is about to become a courtroom."
 
 Evidence:
 ${JSON.stringify(evidence, null, 2)}
@@ -4996,7 +5104,7 @@ function fallbackVisualForSegment(segment, evidence) {
       type: "hook-card",
       palette: "black, yellow, and deep green",
       headline: evidence.viralStrategy?.coverText || (/usmnt|usa|united states/i.test(`${text} ${topic}`) ? "HOME ADVANTAGE TRAP?" : "WORLD CUP WARNING"),
-      subline: text.slice(0, 110),
+      subline: "",
     };
   }
   if (/career mode|fifa|formation|tinkering/i.test(text)) {
@@ -5004,7 +5112,7 @@ function fallbackVisualForSegment(segment, evidence) {
       type: "formation-gag-card",
       palette: "navy and yellow",
       headline: "CAREER MODE FC",
-      subline: "Not the World Cup.",
+      subline: "",
     };
   }
   if (/panic|pressure|trap|headache/i.test(text)) {
@@ -5012,14 +5120,14 @@ function fallbackVisualForSegment(segment, evidence) {
       type: "pressure-card",
       palette: "black, white, and red",
       headline: /usmnt|usa|united states/i.test(`${text} ${topic}`) ? "USMNT PANIC MODE" : "PRESSURE TEST",
-      subline: text.slice(0, 110),
+      subline: "",
     };
   }
   return {
     type: /press|midfield|tactic/i.test(segment.text) ? "tactical-board" : "worldcup-card",
     palette,
     headline: teams.length === 2 ? `${teams[0]} vs ${teams[1]}` : "World Cup Chaos Desk",
-    subline: text.slice(0, 110),
+    subline: "",
   };
 }
 
@@ -7484,6 +7592,64 @@ function preTournamentTopics() {
   ];
 }
 
+function hasMeaningfulWorldCupInput(value) {
+  return Boolean(cleanInputText(value));
+}
+
+async function discoverPreTournamentTopic({ keyInfo, date, existing, memory, input = {} }) {
+  if (!keyInfo?.apiKey || input.offline) {
+    return "";
+  }
+  const fallbackTopics = preTournamentTopics();
+  const prompt = `
+Use Google Search grounding to choose ONE current FIFA World Cup short-video topic for today.
+
+Date: ${date}
+Audience: US, Europe, and South America football fans.
+Channel: World Cup Chaos Desk.
+
+Recent memory to avoid:
+${memoryPrompt(memory)}
+
+Rules:
+- Pick a topic with real current demand, fan debate, recognizable teams/players, and clear visual potential.
+- Do NOT pick USMNT home advantage again unless there is genuinely fresh news today that makes it the strongest topic.
+- Avoid repeating any hook, joke, or angle in recent memory.
+- Prefer a topic that can become a 35-55 second funny but evidence-backed short.
+- Make the topic specific enough for search, script, visuals, and comments.
+
+Fallback seeds if search is weak:
+${fallbackTopics.map((topic, index) => `${index + 1}. ${topic}`).join("\n")}
+
+Return JSON only:
+{
+  "topic": "specific current short topic",
+  "reason": "why this has viral potential today",
+  "avoidReason": "how it avoids recent repetition"
+}
+`.trim();
+  try {
+    const result = await requestGeminiJsonWithFallbacks({
+      keyInfo,
+      primaryModel: SEARCH_MODEL,
+      fallbackModels: SEARCH_FALLBACK_MODELS,
+      prompt,
+      temperature: 0.45,
+      search: true,
+    });
+    const topic = cleanInputText(result.json?.topic);
+    if (topic && !/home advantage helps the usmnt/i.test(topic)) {
+      return topic;
+    }
+    if (topic && existing % 4 !== 0) {
+      return "";
+    }
+    return topic;
+  } catch {
+    return "";
+  }
+}
+
 async function countRunsForDate(date) {
   const index = await listWorldCupRuns();
   return (index.runs || []).filter((run) => run.createdAt?.slice(0, 10) === date).length;
@@ -7497,10 +7663,14 @@ function scheduledHours() {
 }
 
 export async function runWorldCupScheduler(input = {}) {
-  const date = cleanText(input.date || todayDate()).slice(0, 10);
+  const date = (cleanInputText(input.date) || todayDate()).slice(0, 10);
   const existing = await countRunsForDate(date);
   const max = Math.max(1, Number(input.limit || MAX_VIDEOS_PER_DAY) || MAX_VIDEOS_PER_DAY);
-  const explicit = input.topic || input.teamA || input.teamB || input.matchId;
+  const explicit =
+    hasMeaningfulWorldCupInput(input.topic) ||
+    hasMeaningfulWorldCupInput(input.teamA) ||
+    hasMeaningfulWorldCupInput(input.teamB) ||
+    hasMeaningfulWorldCupInput(input.matchId);
   const allowedHours = scheduledHours();
   const currentHour = new Date().getUTCHours();
   if (!explicit && !input.force && allowedHours.length && !allowedHours.includes(currentHour)) {
@@ -7518,7 +7688,12 @@ export async function runWorldCupScheduler(input = {}) {
       maxVideosPerDay: max,
     };
   }
-  const topic = explicit ? input.topic : preTournamentTopics()[existing % preTournamentTopics().length];
+  let topic = cleanInputText(input.topic);
+  if (!explicit) {
+    const keyInfo = await getActiveGeminiKey();
+    const memory = await loadWorldCupMemory({ limit: 12 });
+    topic = (await discoverPreTournamentTopic({ keyInfo, date, existing, memory, input })) || preTournamentTopics()[existing % preTournamentTopics().length];
+  }
   const run = await generateWorldCupRun({
     ...input,
     date,

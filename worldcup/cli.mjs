@@ -16,7 +16,7 @@ function parseArgs(argv) {
       continue;
     }
     const next = argv[index + 1];
-    if (next && !next.startsWith("--")) {
+    if (next !== undefined && !String(next).startsWith("--")) {
       args[key] = next;
       index += 1;
     } else {
