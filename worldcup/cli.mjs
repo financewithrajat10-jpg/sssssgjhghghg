@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { buildMajorWorldCupAssetPacks, buildWorldCupAssetPack, generateWorldCupRun, renderWorldCupRun, runWorldCupScheduler, uploadWorldCupRun } from "./pipeline.mjs";
+import { buildMajorWorldCupAssetPacks, buildWorldCupAssetPack, generateWorldCupRun, rebuildWorldCupVisuals, renderWorldCupRun, runWorldCupScheduler, uploadWorldCupRun } from "./pipeline.mjs";
 
 function parseArgs(argv) {
   const args = {};
@@ -140,11 +140,14 @@ async function main() {
     return;
   }
 
-  if (args.renderOnly || args.uploadOnly) {
+  if (args.visualsOnly || args.rebuildVisuals || args.renderOnly || args.uploadOnly) {
     if (!args.id) {
-      throw new Error("--id is required for --render-only or --upload-only.");
+      throw new Error("--id is required for --visuals-only, --render-only, or --upload-only.");
     }
     let run = null;
+    if (args.visualsOnly || args.rebuildVisuals) {
+      run = await rebuildWorldCupVisuals(args.id, options);
+    }
     if (args.renderOnly) {
       run = await renderWorldCupRun(args.id, options);
     }

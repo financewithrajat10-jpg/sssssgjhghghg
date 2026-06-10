@@ -14,6 +14,8 @@ const runsRoot = path.join(worldCupRoot, "runs");
 const tempRoot = path.join(worldCupRoot, "tmp");
 const bgmRoot = path.join(worldCupRoot, "bgm");
 const assetPackRoot = path.join(worldCupRoot, "asset-packs");
+const localDownloadsRoot = path.resolve(process.env.WORLD_CUP_LOCAL_DOWNLOADS_DIR || path.join(repoRoot, "downloads"));
+const localEntityPreviewRoot = path.join(worldCupRoot, "local-entity-previews");
 const indexPath = path.join(worldCupRoot, "index.json");
 const portableFfmpegPath = "C:\\tmp\\ffmpeg-portable\\bin\\ffmpeg.exe";
 const execFileAsync = promisify(execFile);
@@ -64,6 +66,11 @@ const WORLD_CUP_MIN_REAL_VISUAL_RATIO = Math.max(0, Math.min(1, Number(process.e
 const WORLD_CUP_MIN_CLIP_RATIO = Math.max(0, Math.min(1, Number(process.env.WORLD_CUP_MIN_CLIP_RATIO || 0.55) || 0.55));
 const WORLD_CUP_MAX_IMAGE_SEGMENTS = Math.max(0, Math.min(4, Number(process.env.WORLD_CUP_MAX_IMAGE_SEGMENTS || 2) || 2));
 const WORLD_CUP_LOCAL_PROOF_MAX_PER_VIDEO = Math.max(0, Math.min(2, Number(process.env.WORLD_CUP_LOCAL_PROOF_MAX_PER_VIDEO || 1) || 1));
+const WORLD_CUP_ENABLE_LOCAL_ENTITY_ASSETS = normalizeBool(process.env.WORLD_CUP_ENABLE_LOCAL_ENTITY_ASSETS, true);
+const WORLD_CUP_LOCAL_ENTITY_MAX_ENTITIES = Math.max(0, Math.min(6, Number(process.env.WORLD_CUP_LOCAL_ENTITY_MAX_ENTITIES || 4) || 4));
+const WORLD_CUP_LOCAL_ENTITY_CANDIDATES_PER_ENTITY = Math.max(3, Math.min(12, Number(process.env.WORLD_CUP_LOCAL_ENTITY_CANDIDATES_PER_ENTITY || 10) || 10));
+const WORLD_CUP_LOCAL_ENTITY_SELECTIONS_PER_ENTITY = Math.max(1, Math.min(4, Number(process.env.WORLD_CUP_LOCAL_ENTITY_SELECTIONS_PER_ENTITY || 3) || 3));
+const WORLD_CUP_LOCAL_ENTITY_MIN_SCORE = Math.max(1, Math.min(10, Number(process.env.WORLD_CUP_LOCAL_ENTITY_MIN_SCORE || 6) || 6));
 const MAX_VIDEOS_PER_DAY = Number(process.env.WORLD_CUP_MAX_VIDEOS_PER_DAY || 3);
 const DEFAULT_SCHEDULE_HOURS = process.env.WORLD_CUP_SCHEDULE_HOURS || "9,15,21";
 const DEFAULT_UPLOAD_TARGET = process.env.WORLD_CUP_UPLOAD_TARGET || "google-drive";
@@ -121,6 +128,55 @@ const MAJOR_WORLD_CUP_ASSET_TARGETS = [
   { team: "Morocco", aliases: ["Atlas Lions", "Morocco national football team"], players: ["Achraf Hakimi", "Hakim Ziyech", "Sofyan Amrabat", "Yassine Bounou", "Noussair Mazraoui", "Youssef En-Nesyri"] },
 ];
 
+const LOCAL_ENTITY_FOLDER_HINTS = [
+  { name: "Lionel Messi", folder: "leomessi", type: "player", aliases: ["messi", "lionel messi", "leo messi"] },
+  { name: "Cristiano Ronaldo", folder: "cristiano", type: "player", aliases: ["ronaldo", "cristiano", "cristiano ronaldo", "cr7"] },
+  { name: "Argentina", folder: "afaseleccion", type: "team", aliases: ["argentina", "albiceleste", "la albiceleste"] },
+  { name: "Portugal", folder: "portugal", type: "team", aliases: ["portugal", "portuguese"] },
+  { name: "USMNT", folder: "usmnt", type: "team", aliases: ["usmnt", "usa", "united states", "america", "american"] },
+  { name: "Christian Pulisic", folder: "cmpulisic", type: "player", aliases: ["pulisic", "christian pulisic"] },
+  { name: "Weston McKennie", folder: "west.mckennie", type: "player", aliases: ["mckennie", "weston mckennie"] },
+  { name: "Tyler Adams", folder: "tyler.adams", type: "player", aliases: ["tyler adams", "adams"] },
+  { name: "Gio Reyna", folder: "gioareyna", type: "player", aliases: ["gio reyna", "reyna"] },
+  { name: "Timothy Weah", folder: "timothyweah", type: "player", aliases: ["timothy weah", "weah"] },
+  { name: "England", folder: "england", type: "team", aliases: ["england", "three lions"] },
+  { name: "France", folder: "equipedefrance", type: "team", aliases: ["france", "les bleus"] },
+  { name: "Kylian Mbappe", folder: "k.mbappe", type: "player", aliases: ["mbappe", "kylian mbappe"] },
+  { name: "Brazil", folder: "cbf_futebol", type: "team", aliases: ["brazil", "brasil", "selecao", "seleção"] },
+  { name: "Vinicius Junior", folder: "vinijr", type: "player", aliases: ["vinicius", "vini", "vini jr", "vinicius junior"] },
+  { name: "Neymar", folder: "neymarjr", type: "player", aliases: ["neymar", "neymar jr"] },
+  { name: "Germany", folder: "dfb_team", type: "team", aliases: ["germany", "dfb", "die mannschaft"] },
+  { name: "Jamal Musiala", folder: "jamalmusiala10", type: "player", aliases: ["musiala", "jamal musiala"] },
+  { name: "Florian Wirtz", folder: "flowirtz27", type: "player", aliases: ["wirtz", "florian wirtz"] },
+  { name: "Spain", folder: "sefutbol", type: "team", aliases: ["spain", "la roja", "españa", "espana"] },
+  { name: "Lamine Yamal", folder: "lamineyamal", type: "player", aliases: ["lamine yamal", "yamal"] },
+  { name: "Pedri", folder: "pedri", type: "player", aliases: ["pedri"] },
+  { name: "Mexico", folder: "miseleccionmx", type: "team", aliases: ["mexico", "méxico", "el tri"] },
+  { name: "Canada", folder: "canadasoccer", type: "team", aliases: ["canada"] },
+  { name: "Alphonso Davies", folder: "alphonsodavies", type: "player", aliases: ["alphonso davies", "davies"] },
+  { name: "Netherlands", folder: "onsoranje", type: "team", aliases: ["netherlands", "oranje", "holland"] },
+  { name: "Belgium", folder: "belgianreddevils", type: "team", aliases: ["belgium", "red devils"] },
+  { name: "Kevin De Bruyne", folder: "kevindebruyne", type: "player", aliases: ["de bruyne", "kevin de bruyne", "kdb"] },
+  { name: "Uruguay", folder: "aufoficial", type: "team", aliases: ["uruguay", "la celeste"] },
+  { name: "Federico Valverde", folder: "fedevalverde", type: "player", aliases: ["valverde", "fede valverde", "federico valverde"] },
+  { name: "Colombia", folder: "fcfseleccioncol", type: "team", aliases: ["colombia", "cafeteros"] },
+  { name: "Morocco", folder: "equipedumaroc", type: "team", aliases: ["morocco", "maroc", "atlas lions"] },
+  { name: "Achraf Hakimi", folder: "achrafhakimi", type: "player", aliases: ["hakimi", "achraf hakimi"] },
+  { name: "Japan", folder: "japanfootballassociation", type: "team", aliases: ["japan", "samurai blue"] },
+  { name: "South Korea", folder: "thekfa", type: "team", aliases: ["south korea", "korea", "kfa"] },
+  { name: "Son Heung-min", folder: "hm_son7", type: "player", aliases: ["son", "heung-min son", "son heung-min"] },
+  { name: "Senegal", folder: "footballsenegal", type: "team", aliases: ["senegal"] },
+  { name: "Ghana", folder: "blackstarsofghana_", type: "team", aliases: ["ghana", "black stars"] },
+  { name: "Nigeria", folder: "ng_supereagles", type: "team", aliases: ["nigeria", "super eagles"] },
+  { name: "Australia", folder: "socceroos", type: "team", aliases: ["australia", "socceroos"] },
+  { name: "Saudi Arabia", folder: "saudint", type: "team", aliases: ["saudi arabia", "saudi"] },
+];
+
+const LOCAL_ENTITY_PREFERRED_IMAGES = {
+  cristiano: ["image_10.jpg", "image_2.jpg", "image_1.jpg"],
+  leomessi: ["image_2.jpg", "image_7.jpg", "image_1.jpg"],
+};
+
 export class WorldCupError extends Error {
   constructor(message, { status = 500, code = "WORLD_CUP_ERROR", provider = null, model = null, details = null } = {}) {
     super(message);
@@ -145,6 +201,8 @@ function todayDate() {
 
 function cleanText(value) {
   return String(value || "")
+    .replace(/\u00e2\u20ac\u2122/g, "'")
+    .replace(/\u00e2\u20ac[\u0153\u009d]/g, '"')
     .replace(/â€™/g, "'")
     .replace(/â€œ|â€/g, '"')
     .replace(/â€“|â€”/g, "-")
@@ -155,6 +213,8 @@ function cleanText(value) {
 
 function repairCommonMojibake(value) {
   return String(value || "")
+    .replace(/\u00e2\u20ac\u2122/g, "'")
+    .replace(/\u00e2\u20ac[\u0153\u009d]/g, '"')
     .replace(/soufflÃ©/gi, "souffle")
     .replace(/Ã©/g, "e")
     .replace(/Ã¨/g, "e")
@@ -336,6 +396,7 @@ async function ensureWorldCupDirs() {
   await fs.mkdir(tempRoot, { recursive: true });
   await fs.mkdir(bgmRoot, { recursive: true });
   await fs.mkdir(assetPackRoot, { recursive: true });
+  await fs.mkdir(localEntityPreviewRoot, { recursive: true });
 }
 
 async function resolveFfmpegPath() {
@@ -2097,6 +2158,25 @@ function sanitizeScriptAgainstEvidence(script, evidence, warnings) {
   return output;
 }
 
+function softenWorldCupShortsTone(value) {
+  return cleanText(value)
+    .replace(/\babsolute failure\b/gi, "full group-chat panic")
+    .replace(/\bfailure\b/gi, "pressure moment")
+    .replace(/\bdisaster\b/gi, "panic episode")
+    .replace(/\btotal meltdown\b/gi, "group-chat trial")
+    .replace(/\bmeltdown\b/gi, "panic spiral")
+    .replace(/\btotal collapse\b/gi, "group-chat spiral")
+    .replace(/\bcollapse\b/gi, "panic spiral")
+    .replace(/\bchoke under\b/gi, "feel")
+    .replace(/\bchoke\b/gi, "panic")
+    .replace(/\bfold under\b/gi, "feel")
+    .replace(/\bfold\b/gi, "blink")
+    .replace(/\balready lost the mental game\b/gi, "already shown the nerves are real")
+    .replace(/\bcrisis\b/gi, "pressure test")
+    .replace(/\bperfectly built to exploit\b/gi, "annoyingly built to punish")
+    .replace(/\bsuffocating expectation\b/gi, "loud expectation");
+}
+
 function polishScriptForShorts(script, warnings) {
   const output = { ...script };
   let text = cleanText(output.text);
@@ -2108,6 +2188,17 @@ function polishScriptForShorts(script, warnings) {
   if (text !== original) {
     output.riskNotes = [...(Array.isArray(output.riskNotes) ? output.riskNotes : []), "Meta hook moved out of first sentence for stronger retention."];
     warnings.push(`Shorts hook polish adjusted ${output.styleId || "script"} opening.`);
+  }
+  const toneBefore = text;
+  text = softenWorldCupShortsTone(text);
+  for (const field of ["title", "dataPoint", "opinion", "joke", "memorableLine", "commentTrigger", "coverText"]) {
+    if (typeof output[field] === "string") {
+      output[field] = softenWorldCupShortsTone(output[field]);
+    }
+  }
+  if (text !== toneBefore) {
+    output.riskNotes = [...(Array.isArray(output.riskNotes) ? output.riskNotes : []), "Harsh pundit wording softened for creator tone."];
+    warnings.push(`Shorts tone polish softened harsh wording in ${output.styleId || "script"}.`);
   }
   const words = text.split(/\s+/).filter(Boolean);
   if (words.length > 122) {
@@ -2162,7 +2253,7 @@ ${(viralStrategy.editPlan || []).map((step) => `  - ${step}`).join("\n") || "  -
 - Creator line lab. Every script MUST contain one line with this exact level of casual fan truth:
   "Home advantage is cute until your own fans start sounding like the comment section."
   You may adapt it to the topic, but it must be short, funny, and instantly quotable.
-- Do not use harsh pundit phrases like "national humiliation", "psychological death trap", "sucker's bet", "delusional", "glass cannon", "destined to break", "crushed", or "failure".
+- Do not use harsh pundit phrases like "national humiliation", "psychological death trap", "sucker's bet", "delusional", "glass cannon", "destined to break", "crushed", "failure", "disaster", "meltdown", "collapse", "choke", "fold", or "crisis".
 - End with a debate question that has two natural sides.
 `
     : "";
@@ -2187,6 +2278,7 @@ Video target:
 - First 3-second gate: the first 12-16 spoken words must name the target, create pressure/debate, and make viewers ask "why?"
 - Do not start with a question. For Shorts, claim first and ask later.
 - If the topic is about a recent loss, use the loss as the instant tension: "Germany just gave Paraguay the blueprint..."
+- If the chosen topic/title/cover promises a numbered list such as "3 paths", "4 reasons", or "2 scenarios", the spoken script must clearly label and deliver every item. Do not use a list hook unless the list appears in the script.
 
 Required in every script:
 - a 1 to 2 second hook from one of these proven patterns:
@@ -2217,7 +2309,7 @@ Avoid:
 - poetic lines that need too much decoding; keep them sharp and mobile-friendly
 - more than one hard stat
 - phrases like "absolute failure", "funeral march", "silent killer" unless the style is explicitly dramatic
-- harsh doom language like "national humiliation", "death trap", "sucker's bet", "delusional", "glass cannon", "destined to break", "crushed", or "failure"
+- harsh doom language like "national humiliation", "death trap", "sucker's bet", "delusional", "glass cannon", "destined to break", "crushed", "failure", "disaster", "meltdown", "collapse", "choke", "fold", or "crisis"
 - fake certainty
 - copied commentary wording
 - bland ESPN preview tone
@@ -2302,7 +2394,7 @@ function heuristicScriptScore(script) {
   const hasJoke = /court|jail|rent|panic|group chat|comment section|coaching license|receipts|chaos|aura|cooked|oops|hype|almost|spreadsheet|laptop|ferrari|roundabout|restart button/i.test(text);
   const hasQuestion = /\?/.test(text) || /comments|tell me|who|what/i.test(text);
   const notTooLong = words.length >= 75 && words.length <= 120;
-  const tooHeavy = /absolute failure|funeral march|silent killer|crumble|melt|disaster/i.test(text);
+  const tooHeavy = /absolute failure|funeral march|silent killer|crumble|melt|disaster|meltdown|crisis|collapse|choke|fold/i.test(text);
   return {
     factualSupport: script.dataPoint ? 7 : 5,
     hookStrength: words.slice(0, 14).join(" ").length < 95 ? 8 : 6,
@@ -2324,13 +2416,14 @@ function scoreViral2Script(script, evidence, viralStrategy = {}) {
   const words = text.split(/\s+/).filter(Boolean);
   const opening = firstSentence(text);
   const firstThree = scoreFirstThreeSecondHook(text, evidence);
+  const promiseContract = evaluateScriptPromiseContract(script, evidence, viralStrategy);
   const hasQuestion = /\?/.test(text) || /\b(comment|tell me|agree|overthinking|cynical|verdict)\b/i.test(text);
   const evidenceWeak = Boolean(evidence?.evidenceQuality?.needsReview) || trustedSourceClaims(evidence).length === 0;
   const unsupportedHardStat = hasHardStat(`${text} ${script?.dataPoint || ""}`) && !trustedSourceClaims(evidence).some((claim) => hasHardStat(claim.claim));
   const generic =
     /\b(the 2026 world cup is coming|this match will be interesting|anything can happen|both teams will try|football is unpredictable|at the end of the day)\b/i.test(text) ||
     !/\b(world cup|usmnt|usa|mexico|brazil|argentina|france|spain|england|paraguay|home|host|pressure|favorite|underdog|crowd|group)\b/i.test(text);
-  const harshPunditTone = /\b(national humiliation|psychological death trap|death trap|sucker'?s bet|delusional|glass cannon|destined to break|crushed|failure|crack under|shatter)\b/i.test(text);
+  const harshPunditTone = /\b(national humiliation|psychological death trap|death trap|sucker'?s bet|delusional|glass cannon|destined to break|crushed|failure|disaster|meltdown|crisis|collapse|choke|fold|crack under|shatter)\b/i.test(text);
   const dimensions = {
     hook: hasViralContradiction(opening) && opening.length <= 115 ? 18 : hasViralContradiction(opening) ? 14 : 7,
     clarity: words.length >= 65 && words.length <= 118 ? 12 : words.length <= 130 ? 9 : 5,
@@ -2361,6 +2454,9 @@ function scoreViral2Script(script, evidence, viralStrategy = {}) {
   if (harshPunditTone) {
     hardFails.push("Tone is too harsh/pundit-like; use softer funny football-friend language.");
   }
+  if (promiseContract && !promiseContract.pass) {
+    hardFails.push(promiseContract.reason);
+  }
   if (!hasQuestion) {
     hardFails.push("Ending does not trigger a natural comment debate.");
   }
@@ -2372,6 +2468,7 @@ function scoreViral2Script(script, evidence, viralStrategy = {}) {
     dimensions,
     decision: hardFails.length ? (total >= reviseAt ? "revise" : "discard") : total >= publishAt ? "publish_candidate" : total >= reviseAt ? "revise" : "discard",
     hardFails,
+    promiseContract,
     opening,
     firstThreeSeconds: firstThree,
     checkedAt: nowIso(),
@@ -2417,6 +2514,194 @@ function hardenViralOpening(script, evidence = {}, viralStrategy = {}, warnings 
   return { script, quality, changed: false };
 }
 
+function numberWordToInt(value) {
+  const text = cleanText(String(value || "")).toLowerCase();
+  const map = { two: 2, three: 3, four: 4, five: 5 };
+  return map[text] || Number(text) || 0;
+}
+
+function normalizePromiseText(value) {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/['"]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function detectScriptPromiseContract(script = {}, evidence = {}, viralStrategy = {}) {
+  const candidates = [
+    evidence?.topic,
+    script?.title,
+    script?.coverText,
+    viralStrategy?.coverText,
+    viralStrategy?.oneSentenceContradiction,
+    evidence?.match?.label,
+    script?.hookType,
+  ].map(cleanText).filter(Boolean);
+  let fallback = null;
+  for (const source of candidates) {
+    const match = source.match(/\b(2|3|4|5|two|three|four|five)\s+(?:exact\s+|real\s+|big\s+|major\s+)?(paths?|scenarios?|routes?|traps?|reasons?|ways?|things?|questions?|factors?|moments?|teams?|players?)\b/i);
+    if (!match) {
+      continue;
+    }
+    const count = numberWordToInt(match[1]);
+    if (!count || count < 2 || count > 5) {
+      continue;
+    }
+    const contract = {
+      count,
+      noun: cleanText(match[2]).toLowerCase(),
+      source,
+      explicitItems: extractExplicitPromiseItems(source, count),
+    };
+    if (contract.explicitItems.length >= Math.min(count, 2)) {
+      return contract;
+    }
+    fallback ||= contract;
+  }
+  return fallback;
+}
+
+function extractExplicitPromiseItems(source, count) {
+  const cleaned = cleanText(source);
+  const colonIndex = cleaned.indexOf(":");
+  const afterColon = colonIndex >= 0 ? cleaned.slice(colonIndex + 1) : "";
+  if (!afterColon) {
+    return [];
+  }
+  const pieces = afterColon
+    .split(/\s*,\s*|\s*;\s*|\s+\bor\b\s+/i)
+    .map((item) => cleanText(item.replace(/^(and|or)\s+/i, "")))
+    .filter((item) => item.split(/\s+/).filter(Boolean).length >= 2)
+    .slice(0, count);
+  return pieces.length >= 2 ? pieces : [];
+}
+
+function promiseItemMatchesText(item, text) {
+  const normalizedItem = normalizePromiseText(item);
+  const normalizedText = normalizePromiseText(text);
+  if (!normalizedItem || !normalizedText) {
+    return false;
+  }
+  if (normalizedText.includes(normalizedItem)) {
+    return true;
+  }
+  const tokens = normalizedItem
+    .split(" ")
+    .filter((token) => token.length >= 3 && !/^(the|and|or|with|from|this|that|while|other|world|cup|exact|path|paths|scenario|scenarios)$/.test(token));
+  if (!tokens.length) {
+    return false;
+  }
+  const matched = tokens.filter((token) => normalizedText.includes(token)).length;
+  return matched >= Math.min(tokens.length, Math.max(2, Math.ceil(tokens.length * 0.7)));
+}
+
+function evaluateScriptPromiseContract(script = {}, evidence = {}, viralStrategy = {}) {
+  const contract = detectScriptPromiseContract(script, evidence, viralStrategy);
+  if (!contract) {
+    return null;
+  }
+  const text = cleanText(script?.text || "");
+  const ordinalHits = [
+    /\b(path|scenario|route|reason|way|thing|factor|moment)\s+one\b/i,
+    /\b(path|scenario|route|reason|way|thing|factor|moment)\s+two\b/i,
+    /\b(path|scenario|route|reason|way|thing|factor|moment)\s+three\b/i,
+    /\b(first|second|third|fourth|fifth)\b/i,
+    /\b1[).:]|\b2[).:]|\b3[).:]/,
+  ].filter((pattern) => pattern.test(text)).length;
+  const matchedItems = contract.explicitItems.filter((item) => promiseItemMatchesText(item, text));
+  const explicitPass = contract.explicitItems.length >= contract.count
+    ? matchedItems.length >= contract.count
+    : true;
+  const listSignalPass = ordinalHits >= Math.min(contract.count, 3) || matchedItems.length >= Math.min(contract.count, 2);
+  const pass = explicitPass && listSignalPass;
+  return {
+    ...contract,
+    pass,
+    matchedItems,
+    reason: pass
+      ? ""
+      : `Script promises ${contract.count} ${contract.noun} but does not clearly deliver each one.`,
+  };
+}
+
+function scriptPromiseSubject(evidence = {}, contract = {}) {
+  const source = cleanText(evidence?.topic || contract.source || "this World Cup story");
+  const beforeColon = cleanText(source.split(":")[0] || source);
+  return beforeColon
+    .replace(/\b(2|3|4|5|two|three|four|five)\s+(?:exact\s+|real\s+|big\s+|major\s+)?/i, "")
+    .replace(/^the\s+/i, "")
+    .trim() || "this World Cup story";
+}
+
+function labelPromiseItem(item, index, noun) {
+  const labels = ["one", "two", "three", "four", "five"];
+  const singular = cleanText(noun || "path").replace(/s$/i, "") || "path";
+  return `${singular[0].toUpperCase()}${singular.slice(1)} ${labels[index] || index + 1}: ${cleanText(item)}`;
+}
+
+function promiseRepairOpening(subject, contract) {
+  const combined = normalizePromiseText(`${subject} ${contract?.source || ""} ${(contract?.explicitItems || []).join(" ")}`);
+  const countWord = contract?.count === 2 ? "two" : contract?.count === 3 ? "three" : String(contract?.count || "");
+  const noun = cleanText(contract?.noun || "traps");
+  if (/\busmnt\b|\busa\b|united states/.test(combined) && /paraguay|home|opener/.test(combined)) {
+    return "Home advantage might be the USMNT's biggest trap, not their biggest weapon.";
+  }
+  if (/messi/.test(combined) && /ronaldo/.test(combined)) {
+    return "The Messi-Ronaldo World Cup dream has three traps, and one slip changes the movie.";
+  }
+  return `The obvious ${subject} story is hiding ${countWord} ${noun}, and the safe take is not the fun one.`;
+}
+
+function repairScriptPromiseContract(script = {}, evidence = {}, viralStrategy = {}, warnings = []) {
+  const contract = evaluateScriptPromiseContract(script, evidence, viralStrategy);
+  if (!contract || contract.pass) {
+    return { script, contract, changed: false };
+  }
+  const items = contract.explicitItems.length >= contract.count
+    ? contract.explicitItems.slice(0, contract.count)
+    : Array.from({ length: contract.count }, (_, index) => `the ${index + 1}${index === 0 ? "st" : index === 1 ? "nd" : index === 2 ? "rd" : "th"} pressure point`);
+  const subject = scriptPromiseSubject(evidence, contract);
+  const itemLines = items.map((item, index) => labelPromiseItem(item, index, contract.noun));
+  const countWord = contract.count === 2 ? "two" : contract.count === 3 ? "three" : String(contract.count);
+  const text = cleanText([
+    promiseRepairOpening(subject, contract),
+    `Here are ${countWord} ${contract.noun}: ${itemLines.join(". ")}.`,
+    contract.count === 3 && /messi|ronaldo/i.test(`${subject} ${items.join(" ")}`)
+      ? "That is not nostalgia, it is bracket chaos with feelings."
+      : "That is why this is not just a prediction, it is pressure math with feelings.",
+    "One bad pass and suddenly everyone has a coaching license.",
+    "Which timeline are you betting on?",
+  ].join(" "));
+  const repaired = polishScriptForShorts({
+    ...script,
+    title: cleanText(script.title || subject),
+    text,
+    dataPoint: cleanText(script.dataPoint || "The story depends on bracket path and pressure, not a guaranteed result."),
+    opinion: cleanText(script.opinion || "The funniest outcome is not always the most likely one, but it is the one fans will argue about."),
+    joke: "One bad pass and suddenly everyone has a coaching license.",
+    memorableLine: "One bad pass and suddenly everyone has a coaching license.",
+    commentTrigger: "Which timeline are you betting on?",
+    coverText: cleanText(script.coverText || `${contract.count} ${contract.noun.toUpperCase()}`),
+    visualMoments: [
+      `${subject} split-screen`,
+      `${contract.count} ${contract.noun} bracket board`,
+      "fan reaction panic cutaway",
+      "comment debate ending",
+    ],
+    factualClaims: Array.isArray(script.factualClaims) ? script.factualClaims : [],
+    riskNotes: [
+      ...(Array.isArray(script.riskNotes) ? script.riskNotes : []),
+      "Script promise repaired locally so a numbered hook pays off every item.",
+    ],
+    revisedBy: script.revisedBy ? `${script.revisedBy}+promise_contract` : "promise_contract",
+  }, warnings);
+  const repairedContract = evaluateScriptPromiseContract(repaired, evidence, viralStrategy);
+  warnings.push("Script promise contract hardener rewrote the selected script before TTS.");
+  return { script: repaired, contract: repairedContract, changed: true };
+}
+
 async function reviseViral2Script({ script, evidence, viralStrategy, keyInfo, warnings }) {
   if (!keyInfo?.apiKey) {
     return null;
@@ -2435,8 +2720,9 @@ Keep:
 - One clear opinion.
 - One debate-ending question.
 - No unsupported hard stats.
+- If the topic, title, or cover promises a numbered list such as "3 paths", "4 reasons", or "2 scenarios", the script must explicitly deliver every item using clear labels like "Path one", "Path two", and "Path three". Do not promise three items and spend the whole script on one branch.
 - Keep the tone soft, funny, and nervous, not angry or doom-heavy.
-- Avoid: national humiliation, psychological death trap, sucker's bet, delusional, glass cannon, destined to break, crushed, failure.
+- Avoid: national humiliation, psychological death trap, sucker's bet, delusional, glass cannon, destined to break, crushed, failure, disaster, meltdown, collapse, choke, fold, crisis.
 - Prefer: panic button, career mode with no restart button, group chat courtroom, football court hearing, souffle during an earthquake.
 - The rewritten script MUST include one quotable creator line in this style:
   "Home advantage is cute until your own fans start sounding like the comment section."
@@ -2507,7 +2793,7 @@ Penalize any hard number, ranking, injury, odds, or recent-form claim that is no
 Reward scripts that use urgent, mysterious, controversial, contrarian, story, data-shock, or risk hooks without becoming clickbait misinformation.
 Strongly prefer scripts that feel like a funny, soft, natural football creator, not a TV analyst.
 Prefer 80-115 spoken words. Penalize scripts over 125 words unless they are exceptional.
-Penalize heavy negative phrases like "absolute failure", "funeral march", "silent killer", "crumble", or "disaster" when a softer funny version could work.
+Penalize heavy negative phrases like "absolute failure", "funeral march", "silent killer", "crumble", "disaster", "meltdown", "collapse", "choke", "fold", or "crisis" when a softer funny version could work.
 Reward pitch-friendly writing: short sentences, playful questions, pauses before punchlines, and one memorable joke.
 Strongly penalize scripts that do not contain one quotable creator/fan line like:
 - "Home advantage is cute until your own fans start sounding like the comment section."
@@ -2943,6 +3229,551 @@ function visualCandidateText(candidate) {
       candidate.sourceTeam,
     ].join(" "),
   );
+}
+
+function isPathInside(childPath, parentPath) {
+  const child = path.resolve(String(childPath || ""));
+  const parent = path.resolve(String(parentPath || ""));
+  return child === parent || child.startsWith(`${parent}${path.sep}`);
+}
+
+function mediaMimeType(filePath) {
+  const ext = path.extname(String(filePath || "")).toLowerCase();
+  if (ext === ".png") return "image/png";
+  if (ext === ".webp") return "image/webp";
+  return "image/jpeg";
+}
+
+function isImageFile(filePath) {
+  return /\.(jpe?g|png|webp)$/i.test(String(filePath || ""));
+}
+
+function isVideoFile(filePath) {
+  return /\.(mp4|mov|mkv|webm)$/i.test(String(filePath || ""));
+}
+
+function folderAliasText(folder) {
+  return cleanText(String(folder || "").replace(/[._-]+/g, " "));
+}
+
+function entityAliasRegex(alias) {
+  const escaped = cleanText(alias)
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\s+/g, "\\s+");
+  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i");
+}
+
+function textMentionsAlias(text, alias) {
+  const cleanAlias = cleanText(alias).toLowerCase();
+  if (!cleanAlias || cleanAlias.length < 3) {
+    return false;
+  }
+  return entityAliasRegex(cleanAlias).test(cleanText(text).toLowerCase());
+}
+
+async function listLocalMediaFiles(folder, mediaType = "image") {
+  const root = path.join(localDownloadsRoot, folder);
+  if (!isPathInside(root, localDownloadsRoot) || !(await fileExists(root))) {
+    return [];
+  }
+  const preferred = mediaType === "image" ? path.join(root, "Images") : path.join(root, "Reels");
+  const roots = (await fileExists(preferred)) ? [preferred, root] : [root];
+  const files = [];
+  for (const searchRoot of roots) {
+    let entries = [];
+    try {
+      entries = await fs.readdir(searchRoot, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const filePath = path.join(searchRoot, entry.name);
+      if (entry.isDirectory() && searchRoot === root && ["Images", "Reels"].includes(entry.name)) {
+        continue;
+      }
+      if (entry.isFile() && (mediaType === "image" ? isImageFile(filePath) : isVideoFile(filePath))) {
+        files.push(filePath);
+      }
+    }
+  }
+  return [...new Set(files)].sort((a, b) => path.basename(a).localeCompare(path.basename(b), undefined, { numeric: true }));
+}
+
+async function getLocalEntityCatalog() {
+  if (!WORLD_CUP_ENABLE_LOCAL_ENTITY_ASSETS || !(await fileExists(localDownloadsRoot))) {
+    return [];
+  }
+  let folders = [];
+  try {
+    folders = (await fs.readdir(localDownloadsRoot, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+  const hintByFolder = new Map(LOCAL_ENTITY_FOLDER_HINTS.map((hint) => [hint.folder.toLowerCase(), hint]));
+  const catalog = [];
+  for (const folder of folders) {
+    const hint = hintByFolder.get(folder.toLowerCase());
+    const imageFiles = await listLocalMediaFiles(folder, "image");
+    const videoFiles = await listLocalMediaFiles(folder, "video");
+    if (!imageFiles.length && !videoFiles.length) {
+      continue;
+    }
+    const fallbackName = folderAliasText(folder).replace(/\b\w/g, (letter) => letter.toUpperCase());
+    const aliases = [
+      ...(Array.isArray(hint?.aliases) ? hint.aliases : []),
+      hint?.name,
+      folder,
+      folderAliasText(folder),
+    ]
+      .map(cleanText)
+      .filter(Boolean);
+    catalog.push({
+      name: hint?.name || fallbackName,
+      folder,
+      type: hint?.type || "unknown",
+      aliases: [...new Set(aliases.map((alias) => alias.toLowerCase()))],
+      imageCount: imageFiles.length,
+      videoCount: videoFiles.length,
+      imageFiles,
+      videoFiles,
+    });
+  }
+  return catalog.sort((a, b) => {
+    const hintedA = hintByFolder.has(a.folder.toLowerCase()) ? 0 : 1;
+    const hintedB = hintByFolder.has(b.folder.toLowerCase()) ? 0 : 1;
+    return hintedA - hintedB || b.imageCount - a.imageCount || a.name.localeCompare(b.name);
+  });
+}
+
+function localEntityMentionScore(entity, text) {
+  let score = 0;
+  for (const alias of entity.aliases || []) {
+    if (textMentionsAlias(text, alias)) {
+      score += alias.split(/\s+/).length > 1 ? 4 : 2;
+    }
+  }
+  return score;
+}
+
+function detectLocalEntitiesHeuristic({ catalog, evidence, selectedScript, srtSegments }) {
+  const scriptText = cleanText(selectedScript?.text || selectedScript?.screenplay || "");
+  const fullText = cleanText(
+    [
+      evidence?.topic,
+      evidence?.match?.teamA,
+      evidence?.match?.teamB,
+      ...(Array.isArray(evidence?.keyPlayers) ? evidence.keyPlayers.map((player) => `${player.name || ""} ${player.team || ""}`) : []),
+      scriptText,
+      ...(Array.isArray(srtSegments) ? srtSegments.map((segment) => segment.text || "") : []),
+    ].join(" "),
+  );
+  return catalog
+    .map((entity) => ({
+      ...entity,
+      priorityScore: localEntityMentionScore(entity, fullText) + (entity.type === "player" ? 1 : 0),
+      reason: "Detected from final script/SRT/topic.",
+    }))
+    .filter((entity) => entity.priorityScore > 0 && entity.imageCount > 0)
+    .sort((a, b) => b.priorityScore - a.priorityScore || (a.type === "player" ? -1 : 1))
+    .slice(0, WORLD_CUP_LOCAL_ENTITY_MAX_ENTITIES);
+}
+
+async function detectLocalEntitiesWithGemma({ catalog, evidence, selectedScript, srtSegments, keyInfo, warnings }) {
+  const heuristic = detectLocalEntitiesHeuristic({ catalog, evidence, selectedScript, srtSegments });
+  if (!keyInfo?.apiKey || !catalog.length || WORLD_CUP_LOCAL_ENTITY_MAX_ENTITIES <= 0) {
+    return heuristic;
+  }
+  const available = catalog
+    .map((entity) => ({
+      name: entity.name,
+      folder: entity.folder,
+      type: entity.type,
+      aliases: entity.aliases.slice(0, 8),
+      imageCount: entity.imageCount,
+      videoCount: entity.videoCount,
+    }))
+    .slice(0, 140);
+  const prompt = `
+You are the entity visual planner for a football Shorts pipeline.
+Pick only entities that must appear visually in this specific video.
+
+Rules:
+- Use only folders from the available local library.
+- Prioritize entities explicitly mentioned in the final script/SRT.
+- Include both players in comparison hooks.
+- Include a team only if it is central, not just background context.
+- Return at most ${WORLD_CUP_LOCAL_ENTITY_MAX_ENTITIES} entities.
+
+Final script:
+${selectedScript?.text || selectedScript?.screenplay || ""}
+
+SRT captions:
+${(Array.isArray(srtSegments) ? srtSegments : []).map((segment) => `${segment.number}. ${segment.text}`).join("\n")}
+
+Topic/evidence:
+${JSON.stringify({ topic: evidence?.topic, match: evidence?.match, keyPlayers: evidence?.keyPlayers }, null, 2)}
+
+Available local library:
+${JSON.stringify(available, null, 2)}
+
+Return JSON:
+{
+  "entities": [
+    {"name": "", "folder": "", "priority": "hero|supporting", "reason": ""}
+  ]
+}
+`.trim();
+  try {
+    const result = await requestGeminiJson({ keyInfo, model: VISUAL_REVIEW_MODEL, prompt, temperature: 0.15 });
+    const byFolder = new Map(catalog.map((entity) => [entity.folder.toLowerCase(), entity]));
+    const picked = (Array.isArray(result.json?.entities) ? result.json.entities : [])
+      .map((item, index) => {
+        const match = byFolder.get(cleanText(item.folder).toLowerCase());
+        return match
+          ? {
+              ...match,
+              priority: cleanText(item.priority) || (index === 0 ? "hero" : "supporting"),
+              reason: cleanText(item.reason) || "Selected by Gemma entity planner.",
+              priorityScore: 100 - index,
+            }
+          : null;
+      })
+      .filter(Boolean)
+      .slice(0, WORLD_CUP_LOCAL_ENTITY_MAX_ENTITIES);
+    const merged = [...picked];
+    for (const entity of heuristic) {
+      if (!merged.some((item) => item.folder === entity.folder)) {
+        merged.push(entity);
+      }
+    }
+    return merged.slice(0, WORLD_CUP_LOCAL_ENTITY_MAX_ENTITIES);
+  } catch (error) {
+    warnings.push(`Local entity planner fallback used: ${error.message}`);
+    return heuristic;
+  }
+}
+
+async function makeLocalImagePreview(filePath) {
+  await ensureWorldCupDirs();
+  const out = path.join(localEntityPreviewRoot, `${hashText(filePath)}.jpg`);
+  if (await fileExists(out)) {
+    return out;
+  }
+  try {
+    const ffmpegPath = await resolveFfmpegPath();
+    await execFileAsync(
+      ffmpegPath,
+      [
+        "-y",
+        "-i",
+        filePath,
+        "-vf",
+        "scale=360:360:force_original_aspect_ratio=decrease,pad=360:360:(ow-iw)/2:(oh-ih)/2:black",
+        "-frames:v",
+        "1",
+        out,
+      ],
+      { timeout: 30000, maxBuffer: 10_000_000 },
+    );
+    return out;
+  } catch {
+    return filePath;
+  }
+}
+
+async function makeLocalEntityContactSheet(entity, candidates) {
+  const previews = [];
+  for (const candidate of candidates) {
+    previews.push(await makeLocalImagePreview(candidate.url));
+  }
+  if (!previews.length) {
+    return "";
+  }
+  const out = path.join(localEntityPreviewRoot, `sheet-${safeFilePart(entity.folder)}-${hashText(previews.join("|"))}.jpg`);
+  if (await fileExists(out)) {
+    return out;
+  }
+  try {
+    const ffmpegPath = await resolveFfmpegPath();
+    const inputs = previews.flatMap((preview) => ["-i", preview]);
+    const cols = Math.min(5, previews.length);
+    const labels = previews.map((_, index) => {
+      const label = String(index + 1);
+      return `[${index}:v]scale=240:240:force_original_aspect_ratio=decrease,pad=240:240:(ow-iw)/2:(oh-ih)/2:black,drawbox=x=0:y=0:w=58:h=46:color=black@0.82:t=fill,drawtext=text='${label}':fontcolor=white:fontsize=34:x=16:y=5[t${index}]`;
+    });
+    const stackInputs = previews.map((_, index) => `[t${index}]`).join("");
+    const layout = previews.map((_, index) => `${(index % cols) * 240}_${Math.floor(index / cols) * 240}`).join("|");
+    const filter = [...labels, `${stackInputs}xstack=inputs=${previews.length}:layout=${layout},format=yuv420p[sheet]`].join(";");
+    await execFileAsync(
+      ffmpegPath,
+      ["-y", ...inputs, "-filter_complex", filter, "-map", "[sheet]", "-frames:v", "1", out],
+      { timeout: 60000, maxBuffer: 20_000_000 },
+    );
+    return out;
+  } catch {
+    return "";
+  }
+}
+
+async function localImagePart(filePath) {
+  const previewPath = await makeLocalImagePreview(filePath);
+  const buffer = await fs.readFile(previewPath);
+  if (!buffer.length || buffer.length > 3_500_000) {
+    return null;
+  }
+  return { inlineData: { mimeType: mediaMimeType(previewPath), data: buffer.toString("base64") } };
+}
+
+function localEntityCandidateFromFile(entity, filePath, index) {
+  return {
+    id: `local-entity-${hashText(filePath)}`,
+    provider: "local-downloads",
+    type: "image",
+    url: filePath,
+    preview: filePath,
+    pageUrl: "",
+    title: `${entity.name} local image ${index + 1}`,
+    creator: entity.folder,
+    license: "user-supplied local download",
+    rightsStatus: "user_supplied",
+    sourcePlayer: entity.type === "player" ? entity.name : "",
+    sourceTeam: entity.type === "team" ? entity.name : "",
+    localEntity: {
+      name: entity.name,
+      folder: entity.folder,
+      type: entity.type,
+      aliases: entity.aliases || [],
+    },
+  };
+}
+
+function orderLocalEntityImageFiles(entity, imageFiles) {
+  const preferred = LOCAL_ENTITY_PREFERRED_IMAGES[String(entity.folder || "").toLowerCase()] || [];
+  if (!preferred.length) {
+    return imageFiles;
+  }
+  const rank = new Map(preferred.map((fileName, index) => [fileName.toLowerCase(), index]));
+  return [...imageFiles].sort((a, b) => {
+    const aRank = rank.has(path.basename(a).toLowerCase()) ? rank.get(path.basename(a).toLowerCase()) : 999;
+    const bRank = rank.has(path.basename(b).toLowerCase()) ? rank.get(path.basename(b).toLowerCase()) : 999;
+    return aRank - bRank || path.basename(a).localeCompare(path.basename(b), undefined, { numeric: true });
+  });
+}
+
+function localEntityFallbackReview(candidates, entity) {
+  const adPattern = /mcdonald|hyundai|chobani|rexona|redbull|powerade|uber|loreal|newbalance|underarmour|jbl|galp|celsius|xfinity|truly|wahed|nike|adidas|whoop/i;
+  return candidates
+    .map((candidate, index) => {
+      const text = `${candidate.url} ${candidate.title}`;
+      const risky = adPattern.test(text);
+      return {
+        ...candidate,
+        visualReview: {
+          model: "local-entity-heuristic",
+          relevance: risky ? 4 : Math.max(WORLD_CUP_LOCAL_ENTITY_MIN_SCORE, 8 - Math.floor(index / 3)),
+          risk: risky ? "medium" : "low",
+          flags: risky ? ["possible-ad-or-sponsor"] : [],
+          useCase: risky ? "avoid" : entity.type === "team" ? "team proof image" : "player proof image",
+          reason: risky ? "Filename/path suggests brand or sponsor content." : "Folder matches the requested entity.",
+        },
+      };
+    })
+    .filter((candidate) => Number(candidate.visualReview.relevance || 0) >= WORLD_CUP_LOCAL_ENTITY_MIN_SCORE)
+    .slice(0, WORLD_CUP_LOCAL_ENTITY_SELECTIONS_PER_ENTITY);
+}
+
+async function reviewLocalEntityImagesWithGemma({ entity, keyInfo, warnings }) {
+  const imageFiles = orderLocalEntityImageFiles(entity, entity.imageFiles).slice(0, WORLD_CUP_LOCAL_ENTITY_CANDIDATES_PER_ENTITY);
+  const candidates = imageFiles.map((filePath, index) => localEntityCandidateFromFile(entity, filePath, index));
+  if (!candidates.length) {
+    return [];
+  }
+  if (!keyInfo?.apiKey) {
+    return localEntityFallbackReview(candidates, entity);
+  }
+  const metadata = candidates.map((candidate, index) => ({
+    id: candidate.id,
+    index: index + 1,
+    title: candidate.title,
+    folder: entity.folder,
+    entity: entity.name,
+    type: entity.type,
+    fileName: path.basename(candidate.url),
+  }));
+  const prompt = `
+You are Gemma visual picker for one football entity.
+Review only this entity folder and choose the best images for a short-form football video.
+
+Entity:
+${JSON.stringify({ name: entity.name, folder: entity.folder, type: entity.type, aliases: entity.aliases }, null, 2)}
+
+Rules:
+- Select ${WORLD_CUP_LOCAL_ENTITY_SELECTIONS_PER_ENTITY} or fewer images.
+- Prefer clear football context, match action, celebration, team proof, strong face/kit visibility.
+- Reject or score low: ads, product shots, sponsor graphics, random lifestyle, wrong person/team, heavy text graphics, awkward crop, low quality.
+- If the image does not visibly show football context for this entity, mark usable=false even if it contains the player.
+- The contact sheet has visible numbers in the top-left corner. Use those numbers to avoid ID mixups.
+- Logos on kits are acceptable unless the image is mostly a logo/ad graphic.
+- Return scores honestly. Do not over-select weak images.
+
+Candidates:
+${JSON.stringify(metadata, null, 2)}
+
+Return JSON:
+{
+  "items": [
+    {"id": "", "index": 0, "usable": true, "score": 0, "useCase": "hero|comparison|team|emotion|avoid", "flags": [""], "reason": ""}
+  ],
+  "selectedIds": [""],
+  "selectedIndexes": [0]
+}
+`.trim();
+  const parts = [{ text: prompt }];
+  const contactSheet = await makeLocalEntityContactSheet(entity, candidates).catch(() => "");
+  if (contactSheet) {
+    const sheetBuffer = await fs.readFile(contactSheet).catch(() => null);
+    if (sheetBuffer?.length && sheetBuffer.length < 4_000_000) {
+      parts.push(
+        { text: `Numbered contact sheet for ${entity.name}. Choose by visible number and candidate metadata index.` },
+        { inlineData: { mimeType: "image/jpeg", data: sheetBuffer.toString("base64") } },
+      );
+    }
+  }
+  if (!contactSheet) {
+    for (const candidate of candidates) {
+      const imagePart = await localImagePart(candidate.url).catch(() => null);
+      if (imagePart) {
+        parts.push({ text: `Candidate ${candidate.id}: ${candidate.title}` }, imagePart);
+      }
+    }
+  }
+  try {
+    const result = await requestGeminiJson({ keyInfo, model: VISUAL_REVIEW_MODEL, prompt, parts, temperature: 0.1 });
+    const itemMap = new Map(
+      (Array.isArray(result.json?.items) ? result.json.items : [])
+        .map((item) => [cleanText(item.id), item])
+        .filter(([id]) => id),
+    );
+    const selectedIds = new Set((Array.isArray(result.json?.selectedIds) ? result.json.selectedIds : []).map(cleanText).filter(Boolean));
+    const selectedIndexes = new Set((Array.isArray(result.json?.selectedIndexes) ? result.json.selectedIndexes : []).map((index) => Number(index)).filter((index) => Number.isFinite(index) && index > 0));
+    const reviewed = candidates.map((candidate) => {
+      const item = itemMap.get(candidate.id) || {};
+      const candidateIndex = metadata.find((row) => row.id === candidate.id)?.index || 0;
+      const indexedItem =
+        !itemMap.has(candidate.id) && candidateIndex
+          ? (Array.isArray(result.json?.items) ? result.json.items : []).find((row) => Number(row.index) === Number(candidateIndex)) || {}
+          : item;
+      const score = Math.max(0, Math.min(10, Number(indexedItem.score ?? 0) || 0));
+      const usable = indexedItem.usable !== false && score >= WORLD_CUP_LOCAL_ENTITY_MIN_SCORE;
+      const flags = Array.isArray(indexedItem.flags) ? indexedItem.flags.map(cleanText).filter(Boolean) : [];
+      return {
+        ...candidate,
+        visualReview: {
+          model: VISUAL_REVIEW_MODEL,
+          relevance: score || (usable ? WORLD_CUP_LOCAL_ENTITY_MIN_SCORE : 0),
+          risk: flags.some((flag) => /ad|wrong|reject|sponsor|logo-heavy|low/i.test(flag)) ? "medium" : "low",
+          flags,
+          useCase: cleanText(indexedItem.useCase) || (usable ? `${entity.type} proof image` : "avoid"),
+          reason: cleanText(indexedItem.reason) || "Reviewed by local entity visual picker.",
+        },
+        localEntityUsable: usable,
+        localEntityIndex: candidateIndex,
+      };
+    });
+    const hasExplicitSelection = selectedIds.size > 0 || selectedIndexes.size > 0;
+    const selected = reviewed
+      .filter((candidate) =>
+        hasExplicitSelection ? selectedIds.has(candidate.id) || selectedIndexes.has(candidate.localEntityIndex) : candidate.localEntityUsable,
+      )
+      .sort((a, b) => {
+        const selectedDelta = Number(selectedIds.has(b.id)) - Number(selectedIds.has(a.id));
+        return selectedDelta || Number(b.visualReview.relevance || 0) - Number(a.visualReview.relevance || 0);
+      })
+      .slice(0, WORLD_CUP_LOCAL_ENTITY_SELECTIONS_PER_ENTITY);
+    return selected.length ? selected : localEntityFallbackReview(candidates, entity);
+  } catch (error) {
+    warnings.push(`Local image review fallback used for ${entity.name}: ${error.message}`);
+    return localEntityFallbackReview(candidates, entity);
+  }
+}
+
+function segmentMatchesLocalEntity(segment, entity, evidence = {}) {
+  const segmentText = cleanText(`${segment.text || ""} ${segment.captionText || ""}`).toLowerCase();
+  const topicText = cleanText(`${evidence.topic || ""} ${evidence.match?.teamA || ""} ${evidence.match?.teamB || ""}`).toLowerCase();
+  if ((entity.aliases || []).some((alias) => textMentionsAlias(segmentText, alias))) {
+    return true;
+  }
+  if (Number(segment.number || 0) === 1 && (entity.aliases || []).some((alias) => textMentionsAlias(topicText, alias))) {
+    return true;
+  }
+  return false;
+}
+
+async function buildLocalEntityLayer({ evidence, srtSegments, selectedScript, keyInfo, options, warnings }) {
+  if (!WORLD_CUP_ENABLE_LOCAL_ENTITY_ASSETS || options.offline || WORLD_CUP_LOCAL_ENTITY_MAX_ENTITIES <= 0) {
+    return { enabled: false, entities: [], selectedAssets: [], segments: {} };
+  }
+  const catalog = await getLocalEntityCatalog();
+  if (!catalog.length) {
+    return { enabled: false, entities: [], selectedAssets: [], segments: {}, warning: "No local downloads library found." };
+  }
+  const entities = await detectLocalEntitiesWithGemma({ catalog, evidence, selectedScript, srtSegments, keyInfo, warnings });
+  if (!entities.length) {
+    return { enabled: true, entities: [], selectedAssets: [], segments: {} };
+  }
+  const reviewedResults = await Promise.allSettled(entities.map((entity) => reviewLocalEntityImagesWithGemma({ entity, keyInfo, warnings })));
+  const selectedByFolder = new Map();
+  const selectedAssets = [];
+  for (const [index, result] of reviewedResults.entries()) {
+    const entity = entities[index];
+    const assets = result.status === "fulfilled" ? result.value : [];
+    if (result.status === "rejected") {
+      warnings.push(`Local entity image review failed for ${entity.name}: ${result.reason?.message || result.reason}`);
+    }
+    selectedByFolder.set(entity.folder, assets);
+    selectedAssets.push(...assets);
+  }
+  const segments = {};
+  for (const segment of srtSegments || []) {
+    const matchingEntities = entities
+      .filter((entity) => segmentMatchesLocalEntity(segment, entity, evidence))
+      .filter((entity) => (selectedByFolder.get(entity.folder) || []).length)
+      .slice(0, 2);
+    if (!matchingEntities.length) {
+      continue;
+    }
+    const assets = matchingEntities
+      .map((entity, index) => {
+        const entityAssets = selectedByFolder.get(entity.folder) || [];
+        const asset = entityAssets[(Number(segment.number || 1) + index - 1) % entityAssets.length];
+        return asset ? { entity: entity.name, folder: entity.folder, type: entity.type, asset } : null;
+      })
+      .filter(Boolean);
+    if (assets.length) {
+      segments[String(segment.number)] = {
+        mode: assets.length > 1 ? "split" : "single",
+        provider: "local-entity-overlay",
+        assets,
+        reason: `SRT segment mentions ${assets.map((item) => item.entity).join(" and ")}.`,
+      };
+    }
+  }
+  return {
+    enabled: true,
+    model: VISUAL_REVIEW_MODEL,
+    downloadsRoot: localDownloadsRoot,
+    entities: entities.map((entity) => ({
+      name: entity.name,
+      folder: entity.folder,
+      type: entity.type,
+      priority: entity.priority || "",
+      reason: entity.reason || "",
+      imageCount: entity.imageCount,
+      selectedCount: (selectedByFolder.get(entity.folder) || []).length,
+    })),
+    selectedAssets,
+    segments,
+  };
 }
 
 function localVisualReview(candidate, evidence) {
@@ -3908,9 +4739,10 @@ function imageProofShouldOverrideClip({ image, clip, segment, evidence, imageSlo
   return imageSlotsUsed < earlyProofBudget && (segment.number <= 2 || clipIsGeneric);
 }
 
-async function buildVisualPlan({ evidence, srtSegments, keyInfo, options, warnings, visualScout = null }) {
+async function buildVisualPlan({ evidence, srtSegments, keyInfo, options, warnings, visualScout = null, selectedScript = null }) {
   const attributions = [];
   let wikimediaAssets = Array.isArray(visualScout?.wikimediaAssets) ? visualScout.wikimediaAssets : [];
+  const localEntityLayer = await buildLocalEntityLayer({ evidence, srtSegments, selectedScript, keyInfo, options, warnings });
   const memory = await loadWorldCupMemory({ excludeId: options.id, limit: 12 });
   const memoryAssetIds = new Set(memory.visualAssetIds || []);
   const usedAssetIds = new Set();
@@ -3969,8 +4801,28 @@ async function buildVisualPlan({ evidence, srtSegments, keyInfo, options, warnin
       maxImageSlots: WORLD_CUP_MAX_IMAGE_SEGMENTS,
       maxLocalImageSlots: WORLD_CUP_LOCAL_PROOF_MAX_PER_VIDEO,
     });
+    const entityOverlay = localEntityLayer.segments?.[String(segment.number)] || null;
     if (!imageProofShouldOverrideClip({ image: selectedImage, clip: selectedClip, segment, evidence, imageSlotsUsed, totalSegments: srtSegments.length })) {
       selectedImage = null;
+    }
+    if (entityOverlay?.assets?.length) {
+      if (selectedClip) {
+        selectedImage = null;
+      } else {
+        selectedImage = entityOverlay.assets[0].asset;
+      }
+      for (const overlayItem of entityOverlay.assets) {
+        attributions.push({
+          assetId: overlayItem.asset.id,
+          title: overlayItem.asset.title,
+          creator: overlayItem.asset.creator,
+          license: overlayItem.asset.license,
+          sourceUrl: overlayItem.asset.url,
+          rightsStatus: overlayItem.asset.rightsStatus || "user_supplied",
+          provider: "local-downloads",
+          entity: overlayItem.entity,
+        });
+      }
     }
     if (selectedImage) {
       usedAssetIds.add(selectedImage.id);
@@ -4002,9 +4854,10 @@ async function buildVisualPlan({ evidence, srtSegments, keyInfo, options, warnin
       searchQueries: queries,
       selectedImage: selectedImage || null,
       selectedClip,
+      entityOverlay,
       candidates: uniqueCandidates.slice(0, 6),
       fallbackVisual: fallbackVisualForSegment(segment, evidence),
-      rightsStatus: selectedImage || selectedClip ? "approved" : "fallback_used",
+      rightsStatus: entityOverlay?.assets?.length ? "user_supplied" : selectedImage || selectedClip ? "approved" : "fallback_used",
     });
   }
 
@@ -4021,6 +4874,22 @@ async function buildVisualPlan({ evidence, srtSegments, keyInfo, options, warnin
     captionAnimation: "slide-lift",
     visualPacing: "Change visual every 3 to 6 seconds; use tactical/card fallback when rights are unclear.",
     playerAssets: wikimediaAssets,
+    localEntityLayer: localEntityLayer.enabled
+      ? {
+          model: localEntityLayer.model,
+          downloadsRoot: localEntityLayer.downloadsRoot,
+          entities: localEntityLayer.entities,
+          selectedAssets: localEntityLayer.selectedAssets.map((asset) => ({
+            id: asset.id,
+            title: asset.title,
+            url: asset.url,
+            provider: asset.provider,
+            rightsStatus: asset.rightsStatus,
+            localEntity: asset.localEntity,
+            visualReview: asset.visualReview,
+          })),
+        }
+      : { enabled: false },
     visualScout: visualScout
       ? {
           reviewModel: visualScout.reviewModel,
@@ -4135,6 +5004,21 @@ function buildDirectorSummary(evidence) {
 function buildRightsManifest(visualPlan) {
   const assetRows = [];
   for (const segment of visualPlan.segments || []) {
+    if (segment.entityOverlay?.assets?.length) {
+      for (const overlay of segment.entityOverlay.assets) {
+        const asset = overlay.asset || {};
+        assetRows.push({
+          segment: segment.number,
+          assetId: asset.id,
+          provider: asset.provider || "local-downloads",
+          sourceUrl: asset.url || "",
+          rightsStatus: asset.rightsStatus || "user_supplied",
+          flags: asset.visualReview?.flags || [],
+          visualReview: asset.visualReview || null,
+          entity: overlay.entity || asset.localEntity?.name || "",
+        });
+      }
+    }
     if (segment.selectedImage) {
       const imageRiskText = cleanText(`${segment.selectedImage.title || ""} ${segment.selectedImage.pageUrl || ""} ${segment.selectedImage.creator || ""}`);
       const flags = [
@@ -4314,7 +5198,7 @@ async function planWorldCupVisualsWithRetries({ run, keyInfo, options, initialVi
     }
   }
 
-  let plan = await buildVisualPlan({ evidence: run.evidence, srtSegments: run.srt.segments, keyInfo, options, warnings, visualScout });
+  let plan = await buildVisualPlan({ evidence: run.evidence, srtSegments: run.srt.segments, keyInfo, options, warnings, visualScout, selectedScript: run.selectedScript || run.tts });
   let attempt = 0;
   while (visualPlanNeedsRetry(plan) && attempt < WORLD_CUP_VISUAL_RETRY_ATTEMPTS && !options.offline) {
     attempt += 1;
@@ -4340,7 +5224,7 @@ async function planWorldCupVisualsWithRetries({ run, keyInfo, options, initialVi
     visualScout = retryScoutResult;
     run.visualScout = visualScout;
     run.files.visualScout = await writeRunFile(run, "visual-scout.json", `${JSON.stringify(visualScout, null, 2)}\n`, "utf8");
-    plan = await buildVisualPlan({ evidence: run.evidence, srtSegments: run.srt.segments, keyInfo, options: retryOptions, warnings, visualScout });
+    plan = await buildVisualPlan({ evidence: run.evidence, srtSegments: run.srt.segments, keyInfo, options: retryOptions, warnings, visualScout, selectedScript: run.selectedScript || run.tts });
   }
 
   return plan;
@@ -4474,6 +5358,14 @@ export async function worldCupConfigSummary() {
       maxLocalProofImages: WORLD_CUP_LOCAL_PROOF_MAX_PER_VIDEO,
       retryAttempts: WORLD_CUP_VISUAL_RETRY_ATTEMPTS,
       assetPackRoot,
+      localEntityAssets: {
+        enabled: WORLD_CUP_ENABLE_LOCAL_ENTITY_ASSETS,
+        downloadsRoot: localDownloadsRoot,
+        maxEntities: WORLD_CUP_LOCAL_ENTITY_MAX_ENTITIES,
+        candidatesPerEntity: WORLD_CUP_LOCAL_ENTITY_CANDIDATES_PER_ENTITY,
+        selectedPerEntity: WORLD_CUP_LOCAL_ENTITY_SELECTIONS_PER_ENTITY,
+        minScore: WORLD_CUP_LOCAL_ENTITY_MIN_SCORE,
+      },
     },
     defaultCaptionStyle: WORLD_CUP_CAPTION_PRESET,
     defaultCaptionAnimation: "slide-lift",
@@ -4545,6 +5437,11 @@ export async function generateWorldCupRun(input = {}) {
     const hardened = hardenViralOpening(polishedSelectedScript, run.evidence, run.viralStrategy, run.warnings);
     polishedSelectedScript = hardened.script;
     viralQuality = hardened.quality;
+    const promiseRepaired = repairScriptPromiseContract(polishedSelectedScript, run.evidence, run.viralStrategy, run.warnings);
+    if (promiseRepaired.changed) {
+      polishedSelectedScript = promiseRepaired.script;
+      viralQuality = scoreViral2Script(polishedSelectedScript, run.evidence, run.viralStrategy);
+    }
     polishedSelectedScript.viralQuality = viralQuality;
     run.viralStrategy.scriptGate = {
       selectedStyleId: polishedSelectedScript.styleId,
@@ -4914,8 +5811,9 @@ async function downloadAsset(url, tempDir, fileName) {
   if (!/^https?:\/\//i.test(String(url || ""))) {
     const resolved = path.resolve(String(url || ""));
     const assetRootResolved = path.resolve(assetPackRoot);
-    if (!resolved.startsWith(assetRootResolved)) {
-      throw new Error("Blocked local media outside World Cup asset packs.");
+    const downloadsRootResolved = path.resolve(localDownloadsRoot);
+    if (!isPathInside(resolved, assetRootResolved) && !isPathInside(resolved, downloadsRootResolved)) {
+      throw new Error("Blocked local media outside World Cup asset packs/downloads.");
     }
     if (!(await fileExists(resolved))) {
       throw new Error("Local asset file was not found.");
@@ -5030,6 +5928,57 @@ async function renderClipSegment(ffmpegPath, tempDir, clipUrl, segment, index) {
       Math.max(0.6, segment.durationSeconds).toFixed(3),
       "-vf",
       `scale=${VIDEO_WIDTH}:${VIDEO_HEIGHT}:force_original_aspect_ratio=increase,crop=${VIDEO_WIDTH}:${VIDEO_HEIGHT},setsar=1,fps=${VIDEO_FPS},format=yuv420p`,
+      "-an",
+      ...stockH264Args({ crf: "20" }),
+      out,
+    ],
+    { timeout: 180000, maxBuffer: 20_000_000 },
+  );
+  return out;
+}
+
+async function renderClipSegmentWithEntityOverlay(ffmpegPath, tempDir, clipUrl, segment, index) {
+  const overlayItems = Array.isArray(segment.entityOverlay?.assets) ? segment.entityOverlay.assets.filter((item) => item?.asset?.url).slice(0, 2) : [];
+  if (!overlayItems.length) {
+    return renderClipSegment(ffmpegPath, tempDir, clipUrl, segment, index);
+  }
+  const clipPath = await downloadAsset(clipUrl, tempDir, `clip-${String(index + 1).padStart(3, "0")}.mp4`);
+  const imagePaths = [];
+  for (const [overlayIndex, item] of overlayItems.entries()) {
+    const ext = path.extname(String(item.asset.url || "")) || ".jpg";
+    imagePaths.push(await downloadAsset(item.asset.url, tempDir, `entity-${String(index + 1).padStart(3, "0")}-${overlayIndex + 1}${ext}`));
+  }
+  const out = path.join(tempDir, `segment-${String(index + 1).padStart(3, "0")}.mp4`);
+  const inputs = ["-stream_loop", "-1", "-i", clipPath];
+  for (const imagePath of imagePaths) {
+    inputs.push("-loop", "1", "-i", imagePath);
+  }
+  const duration = Math.max(0.6, segment.durationSeconds).toFixed(3);
+  const bg = `[0:v]scale=${VIDEO_WIDTH}:${VIDEO_HEIGHT}:force_original_aspect_ratio=increase,crop=${VIDEO_WIDTH}:${VIDEO_HEIGHT},setsar=1,fps=${VIDEO_FPS},eq=brightness=-0.08:saturation=0.9[bg]`;
+  const filters = [bg];
+  let last = "bg";
+  if (imagePaths.length === 1) {
+    filters.push("[1:v]scale=820:980:force_original_aspect_ratio=decrease,pad=860:1020:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[entity1]");
+    filters.push(`[${last}]drawbox=x=90:y=135:w=900:h=1100:color=black@0.28:t=fill[cardbg]`);
+    filters.push("[cardbg][entity1]overlay=x=(W-w)/2:y=175,format=yuv420p[vout]");
+  } else {
+    filters.push("[1:v]scale=500:760:force_original_aspect_ratio=decrease,pad=500:780:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[entity1]");
+    filters.push("[2:v]scale=500:760:force_original_aspect_ratio=decrease,pad=500:780:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[entity2]");
+    filters.push(`[${last}]drawbox=x=25:y=190:w=1030:h=860:color=black@0.28:t=fill[splitbg]`);
+    filters.push("[splitbg][entity1]overlay=x=35:y=230[tmp1]");
+    filters.push("[tmp1][entity2]overlay=x=545:y=230,format=yuv420p[vout]");
+  }
+  await execFileAsync(
+    ffmpegPath,
+    [
+      "-y",
+      ...inputs,
+      "-t",
+      duration,
+      "-filter_complex",
+      filters.join(";"),
+      "-map",
+      "[vout]",
       "-an",
       ...stockH264Args({ crf: "20" }),
       out,
@@ -5257,7 +6206,8 @@ async function buildPostRenderQuality({ run, outputPath, ffmpegPath, renderLog =
         id: `${segment.source || "unknown"}-${segment.number || index + 1}`,
         source: cleanText(segment.source || "unknown"),
         selectedClip: /pexels|pixabay|stock/i.test(segment.source || ""),
-        selectedImage: /image|wikimedia|local-asset-pack/i.test(segment.source || ""),
+        selectedImage: /image|wikimedia|local-asset-pack|local-entity/i.test(segment.source || ""),
+        entityOverlay: /local-entity-overlay/i.test(segment.source || ""),
         fallback: /fallback/i.test(segment.source || ""),
       }))
     : visualSegments;
@@ -5269,6 +6219,7 @@ async function buildPostRenderQuality({ run, outputPath, ffmpegPath, renderLog =
   const clipRatio = actualVisuals.length ? clipCount / actualVisuals.length : 0;
   const fallbackCount = actualVisuals.filter((segment) => segment.fallback).length;
   const localProofCount = actualVisuals.filter((segment) => cleanText(segment.source).toLowerCase() === "local-asset-pack").length;
+  const localEntityOverlayCount = actualVisuals.filter((segment) => segment.entityOverlay || /local-entity-overlay/i.test(segment.source || "")).length;
   const captionTotal = segments.reduce((sum, segment) => sum + Math.max(0, Number(segment.endTime || 0) - Number(segment.startTime || 0)), 0);
   const captionCoverage = totalDuration ? Math.min(1, captionTotal / totalDuration) : 0;
   const captionGap = maxCaptionGap(segments, totalDuration);
@@ -5282,6 +6233,7 @@ async function buildPostRenderQuality({ run, outputPath, ffmpegPath, renderLog =
     realVisualRatio: Number(realVisualRatio.toFixed(2)),
     clipRatio: Number(clipRatio.toFixed(2)),
     fallbackCount,
+    localEntityOverlayCount,
     localProofCount,
     captionCoverage: Number(captionCoverage.toFixed(2)),
     maxCaptionGapSeconds: Number(captionGap.toFixed(2)),
@@ -5391,7 +6343,9 @@ export async function renderWorldCupRun(id, options = {}) {
         if (segment.selectedClip && !safeSelectedClip) {
           renderLog.warnings.push(`Segment ${segment.number || index + 1} replaced off-topic stock clip with fallback visual.`);
         }
-        if (segment.selectedImage?.url) {
+        if (safeSelectedClip?.url && segment.entityOverlay?.assets?.length) {
+          segmentPath = await renderClipSegmentWithEntityOverlay(ffmpegPath, tempDir, safeSelectedClip.url, segment, index);
+        } else if (segment.selectedImage?.url) {
           segmentPath = await renderImageSegment(ffmpegPath, tempDir, segment.selectedImage.url, segment, index);
         } else if (safeSelectedClip?.url) {
           segmentPath = await renderClipSegment(ffmpegPath, tempDir, safeSelectedClip.url, segment, index);
@@ -5401,7 +6355,13 @@ export async function renderWorldCupRun(id, options = {}) {
         segmentPaths.push(segmentPath);
         renderLog.segments.push({
           number: segment.number,
-          source: segment.selectedImage ? segment.selectedImage.provider || "image" : safeSelectedClip ? safeSelectedClip.provider : "fallback-card",
+          source: segment.entityOverlay?.assets?.length && safeSelectedClip ? `${safeSelectedClip.provider}+local-entity-overlay` : segment.selectedImage ? segment.selectedImage.provider || "image" : safeSelectedClip ? safeSelectedClip.provider : "fallback-card",
+          entityOverlay: segment.entityOverlay
+            ? {
+                mode: segment.entityOverlay.mode,
+                entities: segment.entityOverlay.assets?.map((item) => item.entity).filter(Boolean) || [],
+              }
+            : null,
           durationSeconds: Number(segment.durationSeconds || 0),
           startTime: Number(segment.renderStartTime ?? segment.startTime ?? 0),
           endTime: Number(segment.renderEndTime ?? segment.endTime ?? 0),
@@ -5586,6 +6546,22 @@ export async function renderWorldCupRun(id, options = {}) {
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+export async function rebuildWorldCupVisuals(id, input = {}) {
+  const run = await readWorldCupRun(id);
+  const options = normalizeWorldCupInput({ ...input, id: run.id });
+  const keyInfo = await getActiveGeminiKey();
+  run.warnings = Array.isArray(run.warnings) ? run.warnings : [];
+  run.visualPlan = await planWorldCupVisualsWithRetries({ run, keyInfo, options });
+  run.attributions = run.visualPlan.attributions || [];
+  run.rightsManifest = buildRightsManifest(run.visualPlan);
+  run.files.visuals = await writeRunFile(run, "visuals.json", `${JSON.stringify(run.visualPlan, null, 2)}\n`, "utf8");
+  run.files.attribution = await writeRunFile(run, "attribution.json", `${JSON.stringify(run.attributions, null, 2)}\n`, "utf8");
+  run.files.rights = await writeRunFile(run, "rights.json", `${JSON.stringify(run.rightsManifest, null, 2)}\n`, "utf8");
+  run.review = reviewWorldCupRun(run);
+  run.status = visualPlanNeedsRetry(run.visualPlan) ? "needs_visual_review" : "generated";
+  return await saveRun(run);
 }
 
 async function fileExists(filePath) {

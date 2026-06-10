@@ -9,5 +9,9 @@ debug.log
 .tmp-audio/
 .tmp-stock-video/
 .tmp-worldcup/
+.tmp-review*/
+backups/
+downloads/**/*.mp4
+downloads/**/Reels/
 image-reel-builder/.tmp-binary-payload.json
 image-reel-builder/.tmp-renders/
