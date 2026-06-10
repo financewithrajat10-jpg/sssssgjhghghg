@@ -73,7 +73,10 @@ const WORLD_CUP_LOCAL_ENTITY_SELECTIONS_PER_ENTITY = Math.max(1, Math.min(4, Num
 const WORLD_CUP_LOCAL_ENTITY_MIN_SCORE = Math.max(1, Math.min(10, Number(process.env.WORLD_CUP_LOCAL_ENTITY_MIN_SCORE || 6) || 6));
 const MAX_VIDEOS_PER_DAY = Number(process.env.WORLD_CUP_MAX_VIDEOS_PER_DAY || 3);
 const DEFAULT_SCHEDULE_HOURS = process.env.WORLD_CUP_SCHEDULE_HOURS || "9,15,21";
-const DEFAULT_UPLOAD_TARGET = process.env.WORLD_CUP_UPLOAD_TARGET || "google-drive";
+const DEFAULT_UPLOAD_TARGET = process.env.WORLD_CUP_UPLOAD_TARGET || "auto";
+const GOOGLE_DRIVE_SCOPE = cleanText(process.env.GOOGLE_DRIVE_SCOPE || process.env.WORLD_CUP_GOOGLE_DRIVE_SCOPE || "https://www.googleapis.com/auth/drive");
+const WORLD_CUP_DRIVE_FALLBACK_TELEGRAM = normalizeBool(process.env.WORLD_CUP_DRIVE_FALLBACK_TELEGRAM, true);
+const WORLD_CUP_TELEGRAM_SEND_SIDECARS = normalizeBool(process.env.WORLD_CUP_TELEGRAM_SEND_SIDECARS, true);
 const WORLD_CUP_RESEARCH_PASSES = Math.max(1, Math.min(5, Number(process.env.WORLD_CUP_RESEARCH_PASSES || 4) || 4));
 const WORLD_CUP_ENABLE_BGM = normalizeBool(process.env.WORLD_CUP_ENABLE_BGM, true);
 const WORLD_CUP_BGM_MODE = cleanText(process.env.WORLD_CUP_BGM_MODE || "auto").toLowerCase();
@@ -5161,6 +5164,7 @@ async function createRunSkeleton(options) {
     review: {},
     r2: { mp4Key: "", publicUrl: "" },
     drive: { folderId: "", folderUrl: "", uploaded: [] },
+    telegram: { uploadedAt: "", messages: [] },
     sources: [],
     attributions: [],
     warnings: [],
@@ -5252,6 +5256,7 @@ function runSummary(run) {
     durationSeconds: run.audio?.durationSeconds || run.srt?.durationSeconds || 0,
     r2: run.r2 || {},
     drive: run.drive || {},
+    telegram: run.telegram || {},
     files: run.files || {},
     warnings: (run.warnings || []).slice(0, 6),
   };
@@ -5311,13 +5316,9 @@ export async function worldCupConfigSummary() {
   return {
     ready: Boolean(keyInfo?.apiKey),
     ffmpegReady: await hasFfmpeg(),
-    r2Ready: Boolean(
-      process.env.CLOUDFLARE_ACCOUNT_ID &&
-        process.env.CLOUDFLARE_R2_ACCESS_KEY_ID &&
-        process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY &&
-        process.env.R2_BUCKET_NAME,
-    ),
-    driveReady: Boolean(hasGoogleDriveCredentials() && process.env.GOOGLE_DRIVE_FOLDER_ID),
+    r2Ready: hasR2Credentials(),
+    driveReady: Boolean(hasGoogleDriveCredentials() && (process.env.GOOGLE_DRIVE_FOLDER_ID || process.env.WORLD_CUP_GOOGLE_DRIVE_FOLDER_ID)),
+    telegramReady: hasTelegramCredentials(),
     uploadTarget: DEFAULT_UPLOAD_TARGET,
     strategy: DEFAULT_WORLD_CUP_STRATEGY,
     strategies: ["classic", "viral2"],
@@ -6674,6 +6675,16 @@ function parseGoogleServiceAccount() {
   return null;
 }
 
+function googleDriveSetupHint() {
+  let serviceAccountEmail = "the service account client_email";
+  try {
+    serviceAccountEmail = parseGoogleServiceAccount()?.client_email || serviceAccountEmail;
+  } catch {
+    // Keep the hint useful even when the secret JSON is malformed.
+  }
+  return `Share the target GOOGLE_DRIVE_FOLDER_ID folder with ${serviceAccountEmail} as Editor, or use upload target telegram. Workspace domain-wide delegation is only needed when impersonating a Workspace user's Drive.`;
+}
+
 function hasGoogleDriveCredentials() {
   try {
     const credentials = parseGoogleServiceAccount();
@@ -6686,11 +6697,26 @@ function hasGoogleDriveCredentials() {
 let cachedGoogleDriveToken = null;
 
 async function getGoogleDriveAccessToken() {
-  const credentials = parseGoogleServiceAccount();
+  let credentials = null;
+  try {
+    credentials = parseGoogleServiceAccount();
+  } catch (error) {
+    throw new WorldCupError("Google Drive service account credentials are not valid JSON.", {
+      status: 400,
+      code: "INVALID_GOOGLE_SERVICE_ACCOUNT_JSON",
+      details: {
+        error: error.message,
+        setupHint: "GOOGLE_SERVICE_ACCOUNT_JSON must be the full service account JSON object, not only the private_key field. GOOGLE_SERVICE_ACCOUNT_BASE64 can contain the base64-encoded full JSON file.",
+      },
+    });
+  }
   if (!credentials?.client_email || !credentials?.private_key) {
     throw new WorldCupError("Missing Google Drive service account JSON credentials.", {
       status: 400,
       code: "MISSING_GOOGLE_DRIVE_CREDENTIALS",
+      details: {
+        setupHint: "The Drive secret needs at least client_email and private_key from the full Google service account JSON file.",
+      },
     });
   }
   if (cachedGoogleDriveToken && cachedGoogleDriveToken.expiresAt > Date.now() + 60000) {
@@ -6703,7 +6729,7 @@ async function getGoogleDriveAccessToken() {
   const payload = base64Url(
     JSON.stringify({
       iss: credentials.client_email,
-      scope: "https://www.googleapis.com/auth/drive.file",
+      scope: GOOGLE_DRIVE_SCOPE,
       aud: tokenUri,
       iat: now,
       exp: now + 3600,
@@ -6759,12 +6785,17 @@ async function driveRequest(pathname, { method = "GET", query = {}, headers = {}
     body,
   });
   const text = await response.text().catch(() => "");
-  const data = text ? JSON.parse(text) : {};
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = text;
+  }
   if (!response.ok) {
     throw new WorldCupError(`Google Drive request failed with HTTP ${response.status}.`, {
       status: response.status >= 400 && response.status < 500 ? response.status : 502,
       code: "GOOGLE_DRIVE_REQUEST_FAILED",
-      details: data || text,
+      details: { response: data || text, setupHint: googleDriveSetupHint() },
     });
   }
   return data;
@@ -6825,7 +6856,7 @@ async function uploadGoogleDriveFile({ folderId, name, body, contentType }) {
     throw new WorldCupError(`Google Drive upload session failed for ${name}: HTTP ${startResponse.status}.`, {
       status: 502,
       code: "GOOGLE_DRIVE_UPLOAD_SESSION_FAILED",
-      details: data,
+      details: { response: data, setupHint: googleDriveSetupHint() },
     });
   }
   const uploadUrl = startResponse.headers.get("location");
@@ -6848,7 +6879,7 @@ async function uploadGoogleDriveFile({ folderId, name, body, contentType }) {
     throw new WorldCupError(`Google Drive upload failed for ${name}: HTTP ${uploadResponse.status}.`, {
       status: 502,
       code: "GOOGLE_DRIVE_UPLOAD_FAILED",
-      details: data,
+      details: { response: data, setupHint: googleDriveSetupHint() },
     });
   }
   if (process.env.GOOGLE_DRIVE_MAKE_PUBLIC === "true") {
@@ -6875,6 +6906,177 @@ function driveBaseParts(run) {
       ? `${slugify(run.match.teamA)}-vs-${slugify(run.match.teamB)}`
       : slugify(run.topic, "world-cup-topic");
   return { date, matchSlug };
+}
+
+function hasR2Credentials() {
+  return Boolean(
+    process.env.CLOUDFLARE_ACCOUNT_ID &&
+      process.env.CLOUDFLARE_R2_ACCESS_KEY_ID &&
+      process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY &&
+      process.env.R2_BUCKET_NAME,
+  );
+}
+
+function telegramConfig() {
+  return {
+    botToken: cleanText(process.env.TELEGRAM_BOT_TOKEN || process.env.WORLD_CUP_TELEGRAM_BOT_TOKEN || ""),
+    chatId: cleanText(process.env.TELEGRAM_CHAT_ID || process.env.WORLD_CUP_TELEGRAM_CHAT_ID || ""),
+    threadId: cleanText(process.env.TELEGRAM_THREAD_ID || process.env.WORLD_CUP_TELEGRAM_THREAD_ID || ""),
+  };
+}
+
+function hasTelegramCredentials() {
+  const config = telegramConfig();
+  return Boolean(config.botToken && config.chatId);
+}
+
+function telegramMessageSummary(result, type, label) {
+  return {
+    type,
+    label,
+    messageId: result?.message_id || 0,
+    date: result?.date || 0,
+    chatId: result?.chat?.id || "",
+  };
+}
+
+function worldCupTelegramCaption(run, suffix = "") {
+  const topic = cleanText(run.topic || run.selectedScript?.title || run.match?.title || "World Cup short");
+  const teams = [run.match?.teamA, run.match?.teamB].filter(Boolean).join(" vs ");
+  const score = Number(run.selectedScript?.viralQuality?.total || run.viralStrategy?.topicScore?.total || run.postRenderQuality?.score || 0);
+  const lines = [
+    "World Cup Chaos Desk",
+    teams || topic,
+    `Type: ${run.type || "short"} | Strategy: ${run.strategy || "classic"}${score ? ` | Score: ${score.toFixed(0)}/100` : ""}`,
+    run.tts?.voice ? `Voice: ${run.tts.voice}` : "",
+    suffix,
+  ].filter(Boolean);
+  return lines.join("\n").slice(0, 1000);
+}
+
+async function telegramRequest(method, fields = {}, file = null) {
+  const config = telegramConfig();
+  if (!config.botToken || !config.chatId) {
+    throw new WorldCupError("Missing Telegram bot upload credentials.", {
+      status: 400,
+      code: "MISSING_TELEGRAM_CONFIG",
+      details: { required: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"] },
+    });
+  }
+  const form = new FormData();
+  form.set("chat_id", config.chatId);
+  if (config.threadId) {
+    form.set("message_thread_id", config.threadId);
+  }
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== undefined && value !== null && value !== "") {
+      form.set(key, String(value));
+    }
+  }
+  if (file?.path) {
+    const payload = await fs.readFile(file.path);
+    form.set(file.field, new Blob([payload], { type: file.contentType || "application/octet-stream" }), file.name || path.basename(file.path));
+  }
+  const response = await fetch(`https://api.telegram.org/bot${config.botToken}/${method}`, {
+    method: "POST",
+    body: form,
+  });
+  const text = await response.text().catch(() => "");
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+  if (!response.ok || data.ok === false) {
+    throw new WorldCupError(`Telegram ${method} failed with HTTP ${response.status}.`, {
+      status: response.status >= 400 && response.status < 500 ? response.status : 502,
+      code: "TELEGRAM_UPLOAD_FAILED",
+      details: data,
+    });
+  }
+  return data.result || data;
+}
+
+async function uploadWorldCupRunToTelegram(id, options = {}) {
+  const run = await readWorldCupRun(id);
+  const runDir = path.join(runsRoot, run.id);
+  const sentSidecars = normalizeBool(options.sendSidecars ?? WORLD_CUP_TELEGRAM_SEND_SIDECARS, WORLD_CUP_TELEGRAM_SEND_SIDECARS);
+  const messages = [];
+  const config = telegramConfig();
+
+  if (run.files.mp4) {
+    const mp4Path = path.join(runDir, run.files.mp4);
+    if (await fileExists(mp4Path)) {
+      try {
+        const videoMessage = await telegramRequest(
+          "sendVideo",
+          { caption: worldCupTelegramCaption(run), supports_streaming: "true" },
+          { field: "video", path: mp4Path, name: `${run.id}.mp4`, contentType: "video/mp4" },
+        );
+        messages.push(telegramMessageSummary(videoMessage, "video", "mp4"));
+      } catch (error) {
+        run.warnings = run.warnings || [];
+        run.warnings.push(`Telegram sendVideo failed, retrying as document: ${error.message}`);
+        const documentMessage = await telegramRequest(
+          "sendDocument",
+          { caption: worldCupTelegramCaption(run, "Video sent as a document fallback.") },
+          { field: "document", path: mp4Path, name: `${run.id}.mp4`, contentType: "video/mp4" },
+        );
+        messages.push(telegramMessageSummary(documentMessage, "document", "mp4"));
+      }
+    }
+  }
+
+  const sidecars = [
+    ["srt", "srt.srt", run.files.srt, "application/x-subrip; charset=utf-8"],
+    ["script", "script.json", run.files.script, "application/json; charset=utf-8"],
+    ["quality", "quality.json", run.files.quality, "application/json; charset=utf-8"],
+    ["evidence", "evidence.json", run.files.evidence, "application/json; charset=utf-8"],
+  ];
+  if (sentSidecars) {
+    for (const [type, targetName, fileName, contentType] of sidecars) {
+      if (!fileName) {
+        continue;
+      }
+      const localPath = path.join(runDir, fileName);
+      if (!(await fileExists(localPath))) {
+        continue;
+      }
+      const result = await telegramRequest(
+        "sendDocument",
+        { caption: `${targetName} for ${run.id}`.slice(0, 1000) },
+        { field: "document", path: localPath, name: targetName, contentType },
+      );
+      messages.push(telegramMessageSummary(result, "document", type));
+    }
+  }
+
+  if (!messages.length) {
+    const result = await telegramRequest("sendMessage", { text: `${worldCupTelegramCaption(run)}\nNo MP4 or sidecar files were available to send.` });
+    messages.push(telegramMessageSummary(result, "message", "empty-run"));
+  }
+
+  run.telegram = {
+    uploadedAt: nowIso(),
+    chatId: config.chatId,
+    threadId: config.threadId,
+    sentSidecars,
+    messages,
+  };
+  run.files.telegram = await writeRunFile(run, "telegram.json", `${JSON.stringify(run.telegram, null, 2)}\n`, "utf8");
+  run.status = run.files.mp4 ? "sent_telegram" : "sidecars_sent_telegram";
+  return await saveRun(run);
+}
+
+async function appendWorldCupUploadWarning(id, warning) {
+  try {
+    const run = await readWorldCupRun(id);
+    run.warnings = Array.from(new Set([...(run.warnings || []), cleanText(warning)].filter(Boolean)));
+    await saveRun(run);
+  } catch {
+    // Upload fallback warnings should never hide the original upload error.
+  }
 }
 
 async function uploadWorldCupRunToR2(id) {
@@ -6951,6 +7153,7 @@ async function uploadWorldCupRunToDrive(id) {
     throw new WorldCupError("Missing GOOGLE_DRIVE_FOLDER_ID for World Cup Google Drive uploads.", {
       status: 400,
       code: "MISSING_GOOGLE_DRIVE_FOLDER_ID",
+      details: { setupHint: googleDriveSetupHint() },
     });
   }
 
@@ -7041,18 +7244,57 @@ async function uploadWorldCupRunToDrive(id) {
 }
 
 export async function uploadWorldCupRun(id, options = {}) {
-  const destination = String(options.destination || options.uploadTarget || DEFAULT_UPLOAD_TARGET || "google-drive").toLowerCase();
+  const destination = String(options.destination || options.uploadTarget || DEFAULT_UPLOAD_TARGET || "auto").toLowerCase();
+  if (destination === "telegram" || destination === "tg" || destination === "telegram-bot") {
+    return await uploadWorldCupRunToTelegram(id, options);
+  }
   if (destination === "r2" || destination === "cloudflare-r2") {
     return await uploadWorldCupRunToR2(id);
   }
   if (destination === "auto") {
-    if (hasGoogleDriveCredentials() && (process.env.GOOGLE_DRIVE_FOLDER_ID || process.env.WORLD_CUP_GOOGLE_DRIVE_FOLDER_ID)) {
-      return await uploadWorldCupRunToDrive(id);
+    const attempts = [];
+    if (hasTelegramCredentials()) {
+      attempts.push(["telegram", () => uploadWorldCupRunToTelegram(id, options)]);
     }
-    return await uploadWorldCupRunToR2(id);
+    if (hasGoogleDriveCredentials() && (process.env.GOOGLE_DRIVE_FOLDER_ID || process.env.WORLD_CUP_GOOGLE_DRIVE_FOLDER_ID)) {
+      attempts.push(["google-drive", () => uploadWorldCupRunToDrive(id)]);
+    }
+    if (hasR2Credentials()) {
+      attempts.push(["r2", () => uploadWorldCupRunToR2(id)]);
+    }
+    if (!attempts.length) {
+      throw new WorldCupError("No World Cup upload target is configured.", {
+        status: 400,
+        code: "NO_UPLOAD_TARGET_CONFIGURED",
+        details: {
+          supported: ["telegram", "google-drive", "r2"],
+          telegram: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"],
+          googleDrive: ["GOOGLE_SERVICE_ACCOUNT_JSON or GOOGLE_SERVICE_ACCOUNT_BASE64", "GOOGLE_DRIVE_FOLDER_ID"],
+          r2: ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_R2_ACCESS_KEY_ID", "CLOUDFLARE_R2_SECRET_ACCESS_KEY", "R2_BUCKET_NAME"],
+        },
+      });
+    }
+    let lastError = null;
+    for (const [target, uploader] of attempts) {
+      try {
+        return await uploader();
+      } catch (error) {
+        lastError = error;
+        await appendWorldCupUploadWarning(id, `Upload target ${target} failed: ${error.message}`);
+      }
+    }
+    throw lastError;
   }
   if (destination === "google-drive" || destination === "drive" || destination === "gdrive") {
-    return await uploadWorldCupRunToDrive(id);
+    try {
+      return await uploadWorldCupRunToDrive(id);
+    } catch (error) {
+      if (WORLD_CUP_DRIVE_FALLBACK_TELEGRAM && hasTelegramCredentials()) {
+        await appendWorldCupUploadWarning(id, `Google Drive upload failed, falling back to Telegram: ${error.message}`);
+        return await uploadWorldCupRunToTelegram(id, options);
+      }
+      throw error;
+    }
   }
   throw new WorldCupError(`Unsupported World Cup upload target: ${destination}`, {
     status: 400,

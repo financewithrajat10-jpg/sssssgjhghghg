@@ -132,7 +132,7 @@ Pipeline stages:
 - Starts a parallel visual-scout branch after script selection so player/team images and stock clips are searched while TTS/SRT work continues.
 - Renders vertical 1080x1920 H.264/AAC MP4 with creator-yellow slide-lift captions.
 - Refuses normal MP4 export when generated TTS audio is missing, or when real image/clip coverage is below `WORLD_CUP_MIN_REAL_VISUAL_RATIO`.
-- Uploads MP4 and sidecars to Google Drive by default, or R2 when `WORLD_CUP_UPLOAD_TARGET=r2`.
+- Sends MP4 and key sidecars through the configured `auto` upload target. `auto` prefers Telegram when bot secrets are present, then Google Drive, then R2.
 - Stores local run files under `.tmp-worldcup/`, which is ignored by Git.
 
 Viral 2.0 comparison mode:
@@ -184,13 +184,24 @@ GitHub Actions:
 
 - `.github/workflows/worldcup-pipeline.yml` runs hourly and can also be triggered manually.
 - The hourly workflow only generates during `WORLD_CUP_SCHEDULE_HOURS` UTC, default `9,15,21`, unless manually triggered with `force=true`.
-- Add these secrets for live generation and Google Drive upload:
+- Add this secret for live generation:
   - `GEMINI_API_KEY`
+- Add these secrets for Telegram delivery:
+  - `TELEGRAM_BOT_TOKEN`
+  - `TELEGRAM_CHAT_ID`
+- Optional Telegram variables:
+  - `TELEGRAM_THREAD_ID` for forum topics/groups
+  - `WORLD_CUP_TELEGRAM_SEND_SIDECARS=true`
+- Optional Google Drive upload secrets:
   - `GOOGLE_SERVICE_ACCOUNT_JSON` or `GOOGLE_SERVICE_ACCOUNT_BASE64`
-- Add this repository variable:
   - `GOOGLE_DRIVE_FOLDER_ID`
 - Share that Drive folder with the service account `client_email`, giving it Editor access.
-- Optional variable: `GOOGLE_DRIVE_MAKE_PUBLIC=false`. Set to `true` only if you want generated files shared by link.
+- `GOOGLE_SERVICE_ACCOUNT_JSON` must be the full service account JSON file, not only the `private_key` value. Workspace domain-wide delegation is not required for direct service-account uploads when the folder is shared with the service account.
+- Optional Drive variables:
+  - `GOOGLE_DRIVE_MAKE_PUBLIC=false`. Set to `true` only if you want generated files shared by link.
+  - `GOOGLE_DRIVE_SCOPE=https://www.googleapis.com/auth/drive`
+  - `WORLD_CUP_DRIVE_FALLBACK_TELEGRAM=true`
+- Optional upload target variable: `WORLD_CUP_UPLOAD_TARGET=auto`, `telegram`, `google-drive`, or `r2`.
 - Optional variable: `WORLD_CUP_STRATEGY=classic` or `viral2`. Keep `classic` when you want the baseline; switch to `viral2` for the stricter viral-content gates.
 - Optional R2 fallback secrets:
   - `CLOUDFLARE_ACCOUNT_ID`
@@ -199,7 +210,7 @@ GitHub Actions:
   - `R2_BUCKET_NAME`
 - Add repository variable `R2_PUBLIC_BASE_URL` only if using R2 with a public domain.
 - Optional secrets: `PEXELS_API_KEY`, `PIXABAY_API_KEY`.
-- Google Drive output is saved under `worldcup/YYYY-MM-DD/team-a-vs-team-b/` inside the configured folder.
+- Google Drive output is saved under `worldcup/YYYY-MM-DD/team-a-vs-team-b/` inside the configured folder when Drive is selected or used as fallback.
 
 ## Voice demos and MP3
 

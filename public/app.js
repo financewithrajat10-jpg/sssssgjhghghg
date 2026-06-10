@@ -2381,6 +2381,7 @@ function updateWorldCupStatus() {
     worldCup.ready ? "Gemini ready" : "Gemini key missing",
     worldCup.ffmpegReady ? "FFmpeg ready" : "FFmpeg missing",
     worldCup.stockReady ? "stock keys ready" : "fallback visuals",
+    worldCup.telegramReady ? "Telegram ready" : "Telegram not configured",
     worldCup.driveReady ? "Drive ready" : "Drive not configured",
     worldCup.r2Ready ? "R2 fallback ready" : "R2 fallback off",
   ];
@@ -2394,7 +2395,8 @@ function worldCupRunActions(run) {
   if (!run.files?.mp4) {
     actions.push(`<button class="ghost-action-button" type="button" data-worldcup-action="render" data-run-id="${escapeHtml(run.id)}">Render</button>`);
   }
-  actions.push(`<button class="ghost-action-button" type="button" data-worldcup-action="upload" data-run-id="${escapeHtml(run.id)}">Upload Drive</button>`);
+  actions.push(`<button class="ghost-action-button" type="button" data-worldcup-action="telegram" data-run-id="${escapeHtml(run.id)}">Send Telegram</button>`);
+  actions.push(`<button class="ghost-action-button" type="button" data-worldcup-action="upload" data-run-id="${escapeHtml(run.id)}">Upload Auto</button>`);
   return actions.join("");
 }
 
@@ -2423,8 +2425,10 @@ function renderWorldCupRuns(index = {}) {
           : `<span>Classic</span>`;
       const mp4Link = run.files?.mp4 || run.r2?.publicUrl ? `<a href="${escapeHtml(worldCupAssetUrl(run, "mp4"))}" target="_blank" rel="noreferrer">MP4</a>` : "";
       const driveLink = run.drive?.folderUrl ? `<a href="${escapeHtml(run.drive.folderUrl)}" target="_blank" rel="noreferrer">Drive folder</a>` : "";
+      const telegramBadge = run.telegram?.uploadedAt ? `<span>Telegram sent</span>` : "";
       const sidecarLinks = [
         driveLink,
+        telegramBadge,
         run.files?.srt ? `<a href="${escapeHtml(worldCupAssetUrl(run, "srt"))}" target="_blank" rel="noreferrer">SRT</a>` : "",
         run.files?.script ? `<a href="${escapeHtml(worldCupAssetUrl(run, "script"))}" target="_blank" rel="noreferrer">Script</a>` : "",
         run.files?.evidence ? `<a href="${escapeHtml(worldCupAssetUrl(run, "evidence"))}" target="_blank" rel="noreferrer">Evidence</a>` : "",
@@ -2467,7 +2471,10 @@ function renderWorldCupRuns(index = {}) {
         renderWorldCupRunFromUi(runId);
       }
       if (action === "upload") {
-        uploadWorldCupRunFromUi(runId);
+        uploadWorldCupRunFromUi(runId, "auto");
+      }
+      if (action === "telegram") {
+        uploadWorldCupRunFromUi(runId, "telegram");
       }
     });
   }
@@ -2513,7 +2520,7 @@ async function generateWorldCupRunFromUi() {
         topic: elements.worldCupTopic.value,
         render: elements.worldCupRender.checked,
         upload: elements.worldCupUpload.checked,
-        uploadTarget: "google-drive",
+        uploadTarget: "auto",
         offline: elements.worldCupOffline.checked,
       }),
     });
@@ -2551,19 +2558,25 @@ async function renderWorldCupRunFromUi(runId) {
   }
 }
 
-async function uploadWorldCupRunFromUi(runId) {
-  setMessage("Uploading World Cup run and sidecars to Google Drive.");
+async function uploadWorldCupRunFromUi(runId, destination = "auto") {
+  setMessage(destination === "telegram" ? "Sending World Cup run to Telegram." : "Uploading World Cup run using the configured auto target.");
   try {
     const response = await apiFetch("/api/worldcup/upload", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: runId, destination: "google-drive" }),
+      body: JSON.stringify({ id: runId, destination }),
     });
     const result = await response.json();
     if (!response.ok) {
       throwApiError(result, "Unable to upload World Cup short.");
     }
-    setMessage(result.drive?.folderUrl ? `Uploaded to Google Drive: ${result.drive.folderUrl}` : "World Cup files uploaded.");
+    if (result.telegram?.uploadedAt) {
+      setMessage("Sent World Cup run to Telegram.");
+    } else if (result.drive?.folderUrl) {
+      setMessage(`Uploaded to Google Drive: ${result.drive.folderUrl}`);
+    } else {
+      setMessage("World Cup files uploaded.");
+    }
     await loadWorldCupRuns();
   } catch (error) {
     showApiError(error.payload || error, error.message || "Unable to upload World Cup short.");

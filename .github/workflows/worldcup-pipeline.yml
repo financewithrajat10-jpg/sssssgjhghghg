@@ -40,9 +40,9 @@ on:
         required: false
         default: "true"
       upload_target:
-        description: "google-drive, r2, or auto"
+        description: "auto, telegram, google-drive, or r2"
         required: false
-        default: "google-drive"
+        default: "auto"
       force:
         description: "Ignore daily limit"
         required: false
@@ -68,9 +68,15 @@ env:
   GOOGLE_SERVICE_ACCOUNT_BASE64: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_BASE64 }}
   GOOGLE_DRIVE_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_FOLDER_ID }}
   GOOGLE_DRIVE_MAKE_PUBLIC: ${{ vars.GOOGLE_DRIVE_MAKE_PUBLIC || 'false' }}
+  GOOGLE_DRIVE_SCOPE: ${{ vars.GOOGLE_DRIVE_SCOPE || 'https://www.googleapis.com/auth/drive' }}
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+  TELEGRAM_THREAD_ID: ${{ vars.TELEGRAM_THREAD_ID }}
+  WORLD_CUP_TELEGRAM_SEND_SIDECARS: ${{ vars.WORLD_CUP_TELEGRAM_SEND_SIDECARS || 'true' }}
+  WORLD_CUP_DRIVE_FALLBACK_TELEGRAM: ${{ vars.WORLD_CUP_DRIVE_FALLBACK_TELEGRAM || 'true' }}
   PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
   PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
-  WORLD_CUP_UPLOAD_TARGET: ${{ vars.WORLD_CUP_UPLOAD_TARGET || 'google-drive' }}
+  WORLD_CUP_UPLOAD_TARGET: ${{ vars.WORLD_CUP_UPLOAD_TARGET || 'auto' }}
   WORLD_CUP_MAX_VIDEOS_PER_DAY: ${{ vars.WORLD_CUP_MAX_VIDEOS_PER_DAY || '3' }}
   WORLD_CUP_SCHEDULE_HOURS: ${{ vars.WORLD_CUP_SCHEDULE_HOURS || '9,15,21' }}
   WORLD_CUP_DEFAULT_LANGUAGE: ${{ vars.WORLD_CUP_DEFAULT_LANGUAGE || 'en' }}
@@ -103,7 +109,7 @@ env:
   INPUT_TOPIC: ${{ github.event.inputs.topic || '' }}
   INPUT_RENDER: ${{ github.event.inputs.render || 'true' }}
   INPUT_UPLOAD: ${{ github.event.inputs.upload || 'true' }}
-  INPUT_UPLOAD_TARGET: ${{ github.event.inputs.upload_target || 'google-drive' }}
+  INPUT_UPLOAD_TARGET: ${{ github.event.inputs.upload_target || 'auto' }}
   INPUT_FORCE: ${{ github.event.inputs.force || 'false' }}
 
 jobs:

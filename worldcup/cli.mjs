@@ -66,6 +66,8 @@ function summarize(run) {
     durationSeconds: run.audio?.durationSeconds || run.srt?.durationSeconds,
     files: run.files,
     r2: run.r2,
+    drive: run.drive,
+    telegram: run.telegram,
     warnings: run.warnings,
   };
 }
