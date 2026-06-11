@@ -577,6 +577,27 @@ export function hasTelegramCredentials() {
   return Boolean(config.botToken && config.chatId);
 }
 
+export async function assertWorldCupMp4Ready(run) {
+  const runDir = path.join(runsRoot, run.id);
+  const mp4Path = run.files?.mp4 ? path.join(runDir, run.files.mp4) : "";
+  if (!mp4Path || !(await fileExists(mp4Path))) {
+    throw new WorldCupError("World Cup upload requires a rendered MP4, but no MP4 file exists.", {
+      status: 422,
+      code: "WORLD_CUP_UPLOAD_MISSING_MP4",
+      details: { runId: run.id, status: run.status, file: run.files?.mp4 || "" },
+    });
+  }
+  const stat = await fs.stat(mp4Path);
+  if (!stat.size) {
+    throw new WorldCupError("World Cup upload requires a non-empty MP4 file.", {
+      status: 422,
+      code: "WORLD_CUP_UPLOAD_EMPTY_MP4",
+      details: { runId: run.id, file: run.files.mp4 },
+    });
+  }
+  return mp4Path;
+}
+
 export function telegramMessageSummary(result, type, label) {
   return {
     type,
@@ -649,6 +670,10 @@ export async function uploadWorldCupRunToTelegram(id, options = {}) {
   const run = await readWorldCupRun(id);
   const runDir = path.join(runsRoot, run.id);
   const sentSidecars = normalizeBool(options.sendSidecars ?? WORLD_CUP_TELEGRAM_SEND_SIDECARS, WORLD_CUP_TELEGRAM_SEND_SIDECARS);
+  const requireMp4 = normalizeBool(options.requireMp4 ?? options.requireVideo, false);
+  if (requireMp4) {
+    await assertWorldCupMp4Ready(run);
+  }
   const messages = [];
   const config = telegramConfig();
 
@@ -700,8 +725,23 @@ export async function uploadWorldCupRunToTelegram(id, options = {}) {
   }
 
   if (!messages.length) {
+    if (requireMp4) {
+      throw new WorldCupError("Telegram upload did not send the required World Cup MP4.", {
+        status: 502,
+        code: "TELEGRAM_REQUIRED_MP4_NOT_SENT",
+        details: { runId: run.id, file: run.files?.mp4 || "" },
+      });
+    }
     const result = await telegramRequest("sendMessage", { text: `${worldCupTelegramCaption(run)}\nNo MP4 or sidecar files were available to send.` });
     messages.push(telegramMessageSummary(result, "message", "empty-run"));
+  }
+
+  if (requireMp4 && !messages.some((message) => message.label === "mp4")) {
+    throw new WorldCupError("Telegram upload completed without sending the required MP4.", {
+      status: 502,
+      code: "TELEGRAM_REQUIRED_MP4_NOT_SENT",
+      details: { runId: run.id, messages },
+    });
   }
 
   run.telegram = {
@@ -893,6 +933,9 @@ export async function uploadWorldCupRunToDrive(id) {
 
 export async function uploadWorldCupRun(id, options = {}) {
   const destination = String(options.destination || options.uploadTarget || DEFAULT_UPLOAD_TARGET || "auto").toLowerCase();
+  if (normalizeBool(options.requireMp4 ?? options.requireVideo, false)) {
+    await assertWorldCupMp4Ready(await readWorldCupRun(id));
+  }
   if (destination === "telegram" || destination === "tg" || destination === "telegram-bot") {
     return await uploadWorldCupRunToTelegram(id, options);
   }

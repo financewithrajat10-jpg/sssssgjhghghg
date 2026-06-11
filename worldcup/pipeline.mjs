@@ -49,6 +49,7 @@ import {
   hasFfmpeg,
   isViral2,
   localDownloadsRoot,
+  normalizeBool,
   normalizeWorldCupInput,
   nowIso,
   setActiveWorldCupApiUsage,
@@ -56,7 +57,7 @@ import {
   synthesizeWorldCupAudio,
   withTimeout,
 } from "./modules/utils.mjs";
-import { designWorldCupCaptions, generateAudioAwareSrt } from "./modules/captions.mjs";
+import { buildSrt, designWorldCupCaptions, generateAudioAwareSrt, normalizeTimedCaptionSegments } from "./modules/captions.mjs";
 import {
   createRunSkeleton,
   listWorldCupRuns,
@@ -315,12 +316,22 @@ async function generateWorldCupRun(input = {}) {
     durationSeconds: run.audio?.durationSeconds || options.durationSeconds,
     warnings: run.warnings,
   });
+  let finalSrtSegments = normalizeTimedCaptionSegments(srtResult.segments);
+  const audioDurationForCaptions = Number(run.audio?.durationSeconds || options.durationSeconds || 0) || 0;
+  const captionEnd = Number(finalSrtSegments.at(-1)?.endTime || 0) || 0;
+  if (audioDurationForCaptions && finalSrtSegments.length && audioDurationForCaptions - captionEnd > 1.25) {
+    const repaired = finalSrtSegments.map((segment) => ({ ...segment }));
+    repaired[repaired.length - 1].endTime = audioDurationForCaptions;
+    repaired[repaired.length - 1].durationSeconds = Math.max(0.45, audioDurationForCaptions - Number(repaired[repaired.length - 1].startTime || 0));
+    finalSrtSegments = normalizeTimedCaptionSegments(repaired);
+    run.warnings.push(`Caption timing extended to full audio duration (${audioDurationForCaptions.toFixed(2)}s).`);
+  }
   run.srt = {
     source: srtResult.source,
     model: srtResult.model || "",
     audioSummary: srtResult.audioSummary || "",
-    segments: srtResult.segments,
-    durationSeconds: srtResult.segments.at(-1)?.endTime || 0,
+    segments: finalSrtSegments,
+    durationSeconds: finalSrtSegments.at(-1)?.endTime || 0,
     captionStyle: "creator-yellow-pop",
     captionAnimation: "slide-lift",
     captionPlan: run.captionPlan || {},
@@ -335,11 +346,12 @@ async function generateWorldCupRun(input = {}) {
     warnings: run.warnings,
   });
   run.srt.captionPlan = run.captionPlan;
-  run.files.srt = await writeRunFile(run, "srt.srt", srtResult.srt, "utf8");
+  const finalSrt = buildSrt(run.srt.segments);
+  run.files.srt = await writeRunFile(run, "srt.srt", finalSrt, "utf8");
   run.files.captions = await writeRunFile(
     run,
     "captions.json",
-    `${JSON.stringify({ ...run.srt, srt: srtResult.srt }, null, 2)}\n`,
+    `${JSON.stringify({ ...run.srt, srt: finalSrt }, null, 2)}\n`,
     "utf8",
   );
   run.status = "srt_ready";
@@ -373,7 +385,20 @@ async function generateWorldCupRun(input = {}) {
         },
       });
     }
-    await uploadWorldCupRun(run.id, input);
+    const allowNeedsReviewUpload = normalizeBool(input.allowNeedsReviewUpload ?? input.allowReviewUpload, false);
+    if (!allowNeedsReviewUpload && (run.review?.status === "needs_review" || run.postRenderQuality?.decision === "revise" || run.postRenderQuality?.decision === "discard")) {
+      throw new WorldCupError("Refusing to upload World Cup run because quality review did not pass.", {
+        status: 422,
+        code: "WORLD_CUP_UPLOAD_REQUIRES_PUBLISH_CANDIDATE",
+        details: {
+          runId: run.id,
+          review: run.review || {},
+          postRenderQuality: run.postRenderQuality || {},
+          hint: "Fix quality issues first, or pass allowNeedsReviewUpload=true only for private debugging.",
+        },
+      });
+    }
+    await uploadWorldCupRun(run.id, { ...input, requireMp4: true });
   }
     run = await readWorldCupRun(run.id);
     run.apiUsage = getActiveWorldCupApiUsage() || run.apiUsage || {};

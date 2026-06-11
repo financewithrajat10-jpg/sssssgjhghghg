@@ -106,6 +106,8 @@ async function main() {
     captionDesign: boolArg(args.captionDesign ?? args.smartCaptions, true),
     allowSilentRender: boolArg(args.allowSilentRender ?? args.allowSilent ?? args.silentOk, false),
     allowFallbackVisuals: boolArg(args.allowFallbackVisuals ?? args.allowFallbackVisualRender ?? args.fallbackVisualsOk, false),
+    allowNeedsReviewUpload: boolArg(args.allowNeedsReviewUpload ?? args.allowReviewUpload, false),
+    requireMp4: boolArg(args.requireMp4 ?? args.requireVideo, false),
     offline: boolArg(args.offline, false),
     generateAudio: boolArg(args.generateAudio, true),
     force: boolArg(args.force, false),

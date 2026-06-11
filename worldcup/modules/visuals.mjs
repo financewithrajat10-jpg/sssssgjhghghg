@@ -2139,12 +2139,12 @@ export function visualPlanRealVisualRatio(visualPlan = {}) {
   if (!segments.length) {
     return 0;
   }
-  return segments.filter((segment) => segment.selectedClip || segment.selectedImage).length / segments.length;
+  return segments.filter((segment) => segment.selectedClip || segment.selectedImage || segment.entityOverlay?.assets?.length).length / segments.length;
 }
 
 export function visualPlanFallbackCount(visualPlan = {}) {
   const segments = Array.isArray(visualPlan.segments) ? visualPlan.segments : [];
-  return segments.filter((segment) => !segment.selectedClip && !segment.selectedImage).length;
+  return segments.filter((segment) => !segment.selectedClip && !segment.selectedImage && !segment.entityOverlay?.assets?.length).length;
 }
 
 export function visualPlanNeedsRetry(visualPlan = {}) {
@@ -2271,7 +2271,7 @@ export function buildRightsManifest(visualPlan) {
         flags: segment.selectedClip.visualReview?.flags || [],
         visualReview: segment.selectedClip.visualReview || null,
       });
-    } else {
+    } else if (!segment.entityOverlay?.assets?.length) {
       assetRows.push({
         segment: segment.number,
         assetId: `fallback-${segment.number}`,
@@ -2300,9 +2300,11 @@ export function reviewWorldCupRun(run) {
     issues.push("Selected script may contain hard stats without trusted sourced claims.");
   }
   const visualSegments = Array.isArray(run.visualPlan?.segments) ? run.visualPlan.segments : [];
-  const visualIds = visualSegments.map((segment) => segment.selectedClip?.id || segment.selectedImage?.id || "").filter(Boolean);
+  const visualIds = visualSegments
+    .map((segment) => segment.selectedClip?.id || segment.selectedImage?.id || segment.entityOverlay?.assets?.map((item) => item.asset?.id).filter(Boolean).join("+") || "")
+    .filter(Boolean);
   const uniqueVisualCount = new Set(visualIds).size;
-  const realVisualCount = visualSegments.filter((segment) => segment.selectedClip || segment.selectedImage).length;
+  const realVisualCount = visualSegments.filter((segment) => segment.selectedClip || segment.selectedImage || segment.entityOverlay?.assets?.length).length;
   const realVisualRatio = visualSegments.length ? realVisualCount / visualSegments.length : 0;
   if (visualIds.length >= 4 && uniqueVisualCount / visualIds.length < 0.7) {
     issues.push("Visual variety is low; clips repeat too much.");

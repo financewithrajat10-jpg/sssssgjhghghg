@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "pre-tournament, prediction, or postmatch"
+        description: "auto, pre-tournament, prediction, or postmatch"
         required: false
-        default: "pre-tournament"
+        default: "auto"
       strategy:
         description: "classic or viral2"
         required: false
@@ -84,7 +84,7 @@ env:
   WORLD_CUP_DRIVE_FALLBACK_TELEGRAM: ${{ vars.WORLD_CUP_DRIVE_FALLBACK_TELEGRAM || 'true' }}
   PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
   PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
-  WORLD_CUP_UPLOAD_TARGET: ${{ vars.WORLD_CUP_UPLOAD_TARGET || 'auto' }}
+  WORLD_CUP_UPLOAD_TARGET: ${{ vars.WORLD_CUP_UPLOAD_TARGET || 'telegram' }}
   WORLD_CUP_MAX_VIDEOS_PER_DAY: ${{ vars.WORLD_CUP_MAX_VIDEOS_PER_DAY || '3' }}
   WORLD_CUP_SCHEDULE_HOURS: ${{ vars.WORLD_CUP_SCHEDULE_HOURS || '9,15,21' }}
   WORLD_CUP_DEFAULT_LANGUAGE: ${{ vars.WORLD_CUP_DEFAULT_LANGUAGE || 'en' }}
@@ -109,7 +109,7 @@ env:
   GEMINI_LITE_TEXT_MODEL: ${{ vars.GEMINI_LITE_TEXT_MODEL || 'gemini-3.1-flash-lite' }}
   GEMINI_RETRY_DELAYS: ${{ vars.GEMINI_RETRY_DELAYS || '5000,10000,15000' }}
   WORLD_CUP_TOPICS: ${{ vars.WORLD_CUP_TOPICS }}
-  INPUT_MODE: ${{ github.event.inputs.mode || 'pre-tournament' }}
+  INPUT_MODE: ${{ github.event.inputs.mode || (github.event_name == 'workflow_dispatch' && 'auto' || 'auto') }}
   INPUT_STRATEGY: ${{ github.event.inputs.strategy || vars.WORLD_CUP_STRATEGY || 'viral2' }}
   INPUT_DATE: ${{ github.event.inputs.date || '' }}
   INPUT_MATCH_ID: ${{ github.event.inputs.match_id || '' }}
@@ -119,8 +119,8 @@ env:
   INPUT_TOPIC: ${{ github.event.inputs.topic || '' }}
   INPUT_RENDER: ${{ github.event.inputs.render || 'true' }}
   INPUT_UPLOAD: ${{ github.event.inputs.upload || 'true' }}
-  INPUT_UPLOAD_TARGET: ${{ github.event.inputs.upload_target || 'auto' }}
-  INPUT_FORCE: ${{ github.event.inputs.force || 'false' }}
+  INPUT_UPLOAD_TARGET: ${{ github.event.inputs.upload_target || vars.WORLD_CUP_UPLOAD_TARGET || 'telegram' }}
+  INPUT_FORCE: ${{ github.event.inputs.force || (github.event_name == 'workflow_dispatch' && 'true' || 'false') }}
 
 jobs:
   generate:
@@ -150,21 +150,73 @@ jobs:
           node --check worldcup/cli.mjs
 
       - name: Run pipeline
-        run: >
-          node worldcup/cli.mjs
-          --scheduled
-          --mode "$INPUT_MODE"
-          --strategy "$INPUT_STRATEGY"
-          --date "$INPUT_DATE"
-          --match-id "$INPUT_MATCH_ID"
-          --team-a "$INPUT_TEAM_A"
-          --team-b "$INPUT_TEAM_B"
-          --kickoff "$INPUT_KICKOFF"
-          --topic "$INPUT_TOPIC"
-          --render "$INPUT_RENDER"
-          --upload "$INPUT_UPLOAD"
-          --upload-target "$INPUT_UPLOAD_TARGET"
-          --force "$INPUT_FORCE"
+        shell: bash
+        run: |
+          mkdir -p .tmp-worldcup
+          node worldcup/cli.mjs \
+            --scheduled \
+            --mode "$INPUT_MODE" \
+            --strategy "$INPUT_STRATEGY" \
+            --date "$INPUT_DATE" \
+            --match-id "$INPUT_MATCH_ID" \
+            --team-a "$INPUT_TEAM_A" \
+            --team-b "$INPUT_TEAM_B" \
+            --kickoff "$INPUT_KICKOFF" \
+            --topic "$INPUT_TOPIC" \
+            --render "$INPUT_RENDER" \
+            --upload "$INPUT_UPLOAD" \
+            --upload-target "$INPUT_UPLOAD_TARGET" \
+            --force "$INPUT_FORCE" | tee .tmp-worldcup/last-result.json
+
+      - name: Verify MP4 delivery contract
+        if: success()
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          const lastResultPath = path.join('.tmp-worldcup', 'last-result.json');
+          if (!fs.existsSync(lastResultPath)) {
+            throw new Error('World Cup pipeline did not write .tmp-worldcup/last-result.json');
+          }
+          const lastResult = JSON.parse(fs.readFileSync(lastResultPath, 'utf8'));
+          if (lastResult.skipped) {
+            if (process.env.GITHUB_EVENT_NAME === 'schedule') {
+              console.log(`Scheduled World Cup run skipped normally: ${lastResult.reason || 'no reason'}`);
+              process.exit(0);
+            }
+            throw new Error(`Manual World Cup pipeline skipped instead of producing a video: ${lastResult.reason || 'unknown reason'}`);
+          }
+          const indexPath = path.join('.tmp-worldcup', 'index.json');
+          if (!fs.existsSync(indexPath)) {
+            throw new Error('World Cup pipeline did not write .tmp-worldcup/index.json');
+          }
+          const index = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+          const run = index.runs?.[0];
+          if (!run?.id) {
+            throw new Error('World Cup pipeline did not create a run.');
+          }
+          if (run.skipped) {
+            throw new Error(`World Cup pipeline skipped instead of producing a video: ${run.reason || 'unknown reason'}`);
+          }
+          const mp4 = run.files?.mp4;
+          if (!mp4) {
+            throw new Error(`World Cup run ${run.id} has no MP4 in run.files.`);
+          }
+          const mp4Path = path.join('.tmp-worldcup', 'runs', run.id, mp4);
+          if (!fs.existsSync(mp4Path) || fs.statSync(mp4Path).size <= 0) {
+            throw new Error(`World Cup run ${run.id} MP4 is missing or empty: ${mp4Path}`);
+          }
+          const target = String(process.env.INPUT_UPLOAD_TARGET || '').toLowerCase();
+          const uploadEnabled = /^(1|true|yes|on)$/i.test(String(process.env.INPUT_UPLOAD || ''));
+          if (uploadEnabled && (target === 'telegram' || target === 'tg' || target === 'telegram-bot')) {
+            const sentMp4 = (run.telegram?.messages || []).some((message) => message.label === 'mp4');
+            if (!sentMp4) {
+              throw new Error(`World Cup run ${run.id} did not record a Telegram MP4 delivery.`);
+            }
+          }
+          console.log(`Verified World Cup MP4: ${mp4Path}`);
+          NODE
 
       - name: Notify Telegram on pipeline failure
         if: failure() && env.TELEGRAM_BOT_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''

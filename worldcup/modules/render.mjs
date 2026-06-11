@@ -438,10 +438,13 @@ function localEntityOverlayLayout(count = 1) {
   const cardH = evenDimension(Math.min(VIDEO_HEIGHT - 300, targetArea / cardW));
   const cardX = evenDimension((VIDEO_WIDTH - cardW) / 2);
   const cardY = evenDimension((VIDEO_HEIGHT - cardH) / 2 - 10);
-  const gap = 20;
-  const panelW = evenDimension((cardW - 60 - gap) / 2);
-  const panelH = cardH - 60;
-  return { cardW, cardH, cardX, cardY, gap, panelW, panelH };
+  const gap = 22;
+  const panelW = cardW - 60;
+  const panelH = evenDimension((cardH - 70 - gap) / 2);
+  const panelX = cardX + 30;
+  const firstY = cardY + 30;
+  const secondY = firstY + panelH + gap;
+  return { cardW, cardH, cardX, cardY, gap, panelW, panelH, panelX, firstY, secondY };
 }
 
 export async function renderClipSegmentWithEntityOverlay(ffmpegPath, tempDir, clipUrl, segment, index) {
@@ -466,19 +469,77 @@ export async function renderClipSegmentWithEntityOverlay(ffmpegPath, tempDir, cl
   let last = "bg";
   if (imagePaths.length === 1) {
     const layout = localEntityOverlayLayout(1);
-    filters.push(`[1:v]scale=${layout.imageW}:${layout.imageH}:force_original_aspect_ratio=decrease,pad=${layout.cardW}:${layout.cardH}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[entity1]`);
-    filters.push(`[${last}]drawbox=x=${layout.cardX}:y=${layout.cardY}:w=${layout.cardW}:h=${layout.cardH}:color=black@0.28:t=fill[cardbg]`);
-    filters.push(`[cardbg][entity1]overlay=x=${layout.cardX}:y=${layout.cardY},format=yuv420p[vout]`);
+    filters.push(`[1:v]scale=${layout.cardW}:${layout.cardH}:force_original_aspect_ratio=increase,crop=${layout.cardW}:${layout.cardH},setsar=1[entity1]`);
+    filters.push(`[${last}]drawbox=x=${layout.cardX}:y=${layout.cardY}:w=${layout.cardW}:h=${layout.cardH}:color=black@0.18:t=fill[cardbg]`);
+    filters.push(`[cardbg][entity1]overlay=x=${layout.cardX}:y=${layout.cardY}[tmp1]`);
+    filters.push(`[tmp1]drawbox=x=${layout.cardX}:y=${layout.cardY}:w=${layout.cardW}:h=${layout.cardH}:color=white@0.85:t=6,format=yuv420p[vout]`);
   } else {
     const layout = localEntityOverlayLayout(2);
-    const firstX = layout.cardX + 30;
-    const secondX = firstX + layout.panelW + layout.gap;
-    const panelY = layout.cardY + 30;
-    filters.push(`[1:v]scale=${layout.panelW}:${layout.panelH}:force_original_aspect_ratio=decrease,pad=${layout.panelW}:${layout.panelH}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[entity1]`);
-    filters.push(`[2:v]scale=${layout.panelW}:${layout.panelH}:force_original_aspect_ratio=decrease,pad=${layout.panelW}:${layout.panelH}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[entity2]`);
-    filters.push(`[${last}]drawbox=x=${layout.cardX}:y=${layout.cardY}:w=${layout.cardW}:h=${layout.cardH}:color=black@0.28:t=fill[splitbg]`);
-    filters.push(`[splitbg][entity1]overlay=x=${firstX}:y=${panelY}[tmp1]`);
-    filters.push(`[tmp1][entity2]overlay=x=${secondX}:y=${panelY},format=yuv420p[vout]`);
+    filters.push(`[1:v]scale=${layout.panelW}:${layout.panelH}:force_original_aspect_ratio=increase,crop=${layout.panelW}:${layout.panelH},setsar=1[entity1]`);
+    filters.push(`[2:v]scale=${layout.panelW}:${layout.panelH}:force_original_aspect_ratio=increase,crop=${layout.panelW}:${layout.panelH},setsar=1[entity2]`);
+    filters.push(`[${last}]drawbox=x=${layout.cardX}:y=${layout.cardY}:w=${layout.cardW}:h=${layout.cardH}:color=black@0.16:t=fill[splitbg]`);
+    filters.push(`[splitbg][entity1]overlay=x=${layout.panelX}:y=${layout.firstY}[tmp1]`);
+    filters.push(`[tmp1][entity2]overlay=x=${layout.panelX}:y=${layout.secondY}[tmp2]`);
+    filters.push(`[tmp2]drawbox=x=${layout.panelX}:y=${layout.firstY}:w=${layout.panelW}:h=${layout.panelH}:color=white@0.88:t=6[border1]`);
+    filters.push(`[border1]drawbox=x=${layout.panelX}:y=${layout.secondY}:w=${layout.panelW}:h=${layout.panelH}:color=white@0.88:t=6,format=yuv420p[vout]`);
+  }
+  await execFileAsync(
+    ffmpegPath,
+    [
+      "-y",
+      ...inputs,
+      "-t",
+      duration,
+      "-filter_complex",
+      filters.join(";"),
+      "-map",
+      "[vout]",
+      "-an",
+      ...stockH264Args({ crf: "20" }),
+      out,
+    ],
+    { timeout: 180000, maxBuffer: 20_000_000 },
+  );
+  return out;
+}
+
+export async function renderEntityOverlayOnlySegment(ffmpegPath, tempDir, segment, index) {
+  const overlayItems = Array.isArray(segment.entityOverlay?.assets) ? segment.entityOverlay.assets.filter((item) => item?.asset?.url).slice(0, 2) : [];
+  if (!overlayItems.length) {
+    throw new WorldCupError("No local entity images were available for standalone render.", {
+      status: 422,
+      code: "WORLD_CUP_NO_LOCAL_ENTITY_IMAGES",
+    });
+  }
+  const imagePaths = [];
+  for (const [overlayIndex, item] of overlayItems.entries()) {
+    const ext = path.extname(String(item.asset.url || "")) || ".jpg";
+    imagePaths.push(await downloadAsset(item.asset.url, tempDir, `entity-only-${String(index + 1).padStart(3, "0")}-${overlayIndex + 1}${ext}`));
+  }
+  const out = path.join(tempDir, `segment-${String(index + 1).padStart(3, "0")}.mp4`);
+  const inputs = [];
+  for (const imagePath of imagePaths) {
+    inputs.push("-loop", "1", "-i", imagePath);
+  }
+  const duration = Math.max(0.6, segment.durationSeconds).toFixed(3);
+  const filters = [];
+  if (imagePaths.length === 1) {
+    const layout = localEntityOverlayLayout(1);
+    filters.push(`[0:v]split=2[base][fg]`);
+    filters.push(`[base]scale=${VIDEO_WIDTH}:${VIDEO_HEIGHT}:force_original_aspect_ratio=increase,crop=${VIDEO_WIDTH}:${VIDEO_HEIGHT},boxblur=28:2,eq=brightness=-0.22:saturation=0.85,setsar=1,fps=${VIDEO_FPS}[bg]`);
+    filters.push(`[fg]scale=${layout.cardW}:${layout.cardH}:force_original_aspect_ratio=increase,crop=${layout.cardW}:${layout.cardH},setsar=1[entity1]`);
+    filters.push(`[bg][entity1]overlay=x=${layout.cardX}:y=${layout.cardY}[tmp1]`);
+    filters.push(`[tmp1]drawbox=x=${layout.cardX}:y=${layout.cardY}:w=${layout.cardW}:h=${layout.cardH}:color=white@0.88:t=6,format=yuv420p[vout]`);
+  } else {
+    const layout = localEntityOverlayLayout(2);
+    filters.push(`[0:v]split=2[base][fg1]`);
+    filters.push(`[base]scale=${VIDEO_WIDTH}:${VIDEO_HEIGHT}:force_original_aspect_ratio=increase,crop=${VIDEO_WIDTH}:${VIDEO_HEIGHT},boxblur=28:2,eq=brightness=-0.24:saturation=0.85,setsar=1,fps=${VIDEO_FPS}[bg]`);
+    filters.push(`[fg1]scale=${layout.panelW}:${layout.panelH}:force_original_aspect_ratio=increase,crop=${layout.panelW}:${layout.panelH},setsar=1[entity1]`);
+    filters.push(`[1:v]scale=${layout.panelW}:${layout.panelH}:force_original_aspect_ratio=increase,crop=${layout.panelW}:${layout.panelH},setsar=1[entity2]`);
+    filters.push(`[bg][entity1]overlay=x=${layout.panelX}:y=${layout.firstY}[tmp1]`);
+    filters.push(`[tmp1][entity2]overlay=x=${layout.panelX}:y=${layout.secondY}[tmp2]`);
+    filters.push(`[tmp2]drawbox=x=${layout.panelX}:y=${layout.firstY}:w=${layout.panelW}:h=${layout.panelH}:color=white@0.88:t=6[border1]`);
+    filters.push(`[border1]drawbox=x=${layout.panelX}:y=${layout.secondY}:w=${layout.panelW}:h=${layout.panelH}:color=white@0.88:t=6,format=yuv420p[vout]`);
   }
   await execFileAsync(
     ffmpegPath,
@@ -667,7 +728,7 @@ export async function resolveBgmTrack({ run, options, ffmpegPath, warnings }) {
 
 export function voiceAudioFilter(runOrOptions = {}) {
   if (isViral2(runOrOptions)) {
-    const volume = Math.max(WORLD_CUP_VOICE_VOLUME, 1.65).toFixed(2);
+    const volume = Math.max(WORLD_CUP_VOICE_VOLUME, 1.9).toFixed(2);
     return `volume=${volume},acompressor=threshold=-22dB:ratio=3.2:attack=4:release=80,loudnorm=I=-16:LRA=9:TP=-1.5,alimiter=limit=0.96`;
   }
   return `volume=${WORLD_CUP_VOICE_VOLUME.toFixed(2)},acompressor=threshold=-18dB:ratio=2.5:attack=6:release=90,alimiter=limit=0.95`;
@@ -710,7 +771,10 @@ export async function analyzeRenderedAudio(ffmpegPath, outputPath) {
 
 export async function buildPostRenderQuality({ run, outputPath, ffmpegPath, renderLog = null }) {
   const totalDuration = Number(run.audio?.durationSeconds || run.srt?.durationSeconds || 0) || 0;
-  const segments = Array.isArray(run.srt?.segments) ? run.srt.segments : [];
+  const runDir = path.join(runsRoot, run.id);
+  const burnedSrtText = run.files?.srt ? await fs.readFile(path.join(runDir, run.files.srt), "utf8").catch(() => "") : "";
+  const burnedSegments = burnedSrtText ? parseSrtSegments(burnedSrtText) : [];
+  const segments = burnedSegments.length ? burnedSegments : Array.isArray(run.srt?.segments) ? run.srt.segments : [];
   const visualSegments = Array.isArray(run.visualPlan?.segments) ? run.visualPlan.segments : [];
   const renderedSegments = Array.isArray(renderLog?.segments) ? renderLog.segments : [];
   const actualVisuals = renderedSegments.length
@@ -773,7 +837,7 @@ export async function buildPostRenderQuality({ run, outputPath, ffmpegPath, rend
   if (captionCoverage < 0.72 || captionGap > 1.4) {
     issues.push("Caption coverage/gaps may hurt retention.");
   }
-  if (Number.isFinite(audio.meanVolumeDb) && audio.meanVolumeDb < -28) {
+  if (Number.isFinite(audio.meanVolumeDb) && audio.meanVolumeDb < -22) {
     issues.push(`Rendered audio is still quiet (mean ${audio.meanVolumeDb.toFixed(1)} dB).`);
   }
   if (run.bgm?.enabled !== false && run.bgm?.volume && Number(run.bgm.volume) < 0.14) {
@@ -848,12 +912,14 @@ export async function renderWorldCupRun(id, options = {}) {
     for (const [index, segment] of visualSegments.entries()) {
       try {
         let segmentPath = "";
-        const safeSelectedClip =
-          segment.selectedClip && candidateAllowedByReview(segment.selectedClip) && !clipLooksContextMismatched(segment.selectedClip, run.evidence || {})
-            ? segment.selectedClip
-            : null;
+        const clipCandidates = [segment.selectedClip, ...(Array.isArray(segment.candidates) ? segment.candidates : [])].filter(Boolean);
+        const safeSelectedClip = clipCandidates.find(
+          (candidate) => candidate?.url && candidateAllowedByReview(candidate) && !clipLooksContextMismatched(candidate, run.evidence || {}),
+        );
         if (segment.selectedClip && !safeSelectedClip) {
-          renderLog.warnings.push(`Segment ${segment.number || index + 1} replaced off-topic stock clip with fallback visual.`);
+          renderLog.warnings.push(`Segment ${segment.number || index + 1} rejected off-topic stock clip and found no safe stock replacement.`);
+        } else if (segment.selectedClip && safeSelectedClip && safeSelectedClip.id !== segment.selectedClip.id) {
+          renderLog.warnings.push(`Segment ${segment.number || index + 1} recovered with backup stock clip after selected clip was rejected.`);
         }
         if (safeSelectedClip?.url && segment.entityOverlay?.assets?.length) {
           segmentPath = await renderClipSegmentWithEntityOverlay(ffmpegPath, tempDir, safeSelectedClip.url, segment, index);
@@ -861,6 +927,8 @@ export async function renderWorldCupRun(id, options = {}) {
           segmentPath = await renderImageSegment(ffmpegPath, tempDir, segment.selectedImage.url, segment, index);
         } else if (safeSelectedClip?.url) {
           segmentPath = await renderClipSegment(ffmpegPath, tempDir, safeSelectedClip.url, segment, index);
+        } else if (segment.entityOverlay?.assets?.length) {
+          segmentPath = await renderEntityOverlayOnlySegment(ffmpegPath, tempDir, segment, index);
         } else {
           if (!allowFallbackVisuals) {
             throw new WorldCupError("Refusing to render fallback card for a World Cup segment without a safe clip or image.", {
@@ -878,7 +946,7 @@ export async function renderWorldCupRun(id, options = {}) {
         segmentPaths.push(segmentPath);
         renderLog.segments.push({
           number: segment.number,
-          source: segment.entityOverlay?.assets?.length && safeSelectedClip ? `${safeSelectedClip.provider}+local-entity-overlay` : segment.selectedImage ? segment.selectedImage.provider || "image" : safeSelectedClip ? safeSelectedClip.provider : "fallback-card",
+          source: segment.entityOverlay?.assets?.length && safeSelectedClip ? `${safeSelectedClip.provider}+local-entity-overlay` : segment.entityOverlay?.assets?.length ? "local-entity-image" : segment.selectedImage ? segment.selectedImage.provider || "image" : safeSelectedClip ? safeSelectedClip.provider : "fallback-card",
           entityOverlay: segment.entityOverlay
             ? {
                 mode: segment.entityOverlay.mode,
@@ -941,7 +1009,11 @@ export async function renderWorldCupRun(id, options = {}) {
       mode: "caption-gaps-filled-no-final-loop",
     };
 
-    const srtText = await fs.readFile(path.join(runDir, run.files.srt || "srt.srt"), "utf8").catch(() => buildSrt(run.srt?.segments || []));
+    const canonicalSrtText = Array.isArray(run.srt?.segments) && run.srt.segments.length ? buildSrt(run.srt.segments) : "";
+    if (canonicalSrtText && run.files.srt) {
+      await fs.writeFile(path.join(runDir, run.files.srt), canonicalSrtText, "utf8");
+    }
+    const srtText = canonicalSrtText || (await fs.readFile(path.join(runDir, run.files.srt || "srt.srt"), "utf8").catch(() => buildSrt(run.srt?.segments || [])));
     const assPath = path.join(tempDir, "captions.ass");
     await fs.writeFile(assPath, buildAssFromSrt(srtText, run.captionPlan || run.viralStrategy?.captionInstructions || {}), "utf8");
     const outputPath = path.join(runDir, `${safeFilePart(run.topic)}.mp4`);
@@ -970,7 +1042,7 @@ export async function renderWorldCupRun(id, options = {}) {
         "[voicebase]asplit=2[voice_sc][voice_mix]",
         `[2:a]${bgmAudioFilter(volume, duration, fadeOutStart)}[bgmraw]`,
         "[bgmraw][voice_sc]sidechaincompress=threshold=0.055:ratio=3.5:attack=28:release=220:makeup=1.2[duckedbgm]",
-        "[voice_mix][duckedbgm]amix=inputs=2:duration=first:dropout_transition=0,alimiter=limit=0.96[aout]",
+        "[voice_mix][duckedbgm]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,loudnorm=I=-16:LRA=8:TP=-1.5,alimiter=limit=0.96[aout]",
       ]
         .filter(Boolean)
         .join(";");

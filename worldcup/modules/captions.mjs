@@ -141,6 +141,35 @@ export function assTimestamp(seconds) {
   return `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
 }
 
+const MAX_CAPTION_SEGMENT_SECONDS = 5.8;
+
+export function splitLongTimedCaptionSegment(segment, maxDuration = MAX_CAPTION_SEGMENT_SECONDS) {
+  const startTime = Math.max(0, Number(segment.startTime ?? segment.start ?? 0) || 0);
+  const endTime = Math.max(startTime + 0.45, Number(segment.endTime ?? segment.end ?? startTime + 1.8) || startTime + 1.8);
+  const duration = endTime - startTime;
+  if (duration <= maxDuration) {
+    return [{ ...segment, startTime, endTime, durationSeconds: duration }];
+  }
+  const text = normalizeFootballCaptionText(segment.text || segment.caption || segment.line || "");
+  const words = text.split(/\s+/).filter(Boolean);
+  const partCount = Math.max(2, Math.ceil(duration / maxDuration));
+  const parts = [];
+  for (let index = 0; index < partCount; index += 1) {
+    const partStart = startTime + (duration * index) / partCount;
+    const partEnd = index === partCount - 1 ? endTime : startTime + (duration * (index + 1)) / partCount;
+    const wordStart = Math.floor((words.length * index) / partCount);
+    const wordEnd = index === partCount - 1 ? words.length : Math.max(wordStart + 1, Math.floor((words.length * (index + 1)) / partCount));
+    parts.push({
+      ...segment,
+      startTime: partStart,
+      endTime: partEnd,
+      durationSeconds: partEnd - partStart,
+      text: words.length ? words.slice(wordStart, wordEnd).join(" ") : text,
+    });
+  }
+  return parts.filter((part) => cleanText(part.text));
+}
+
 export function normalizeTimedCaptionSegments(rawSegments = []) {
   const sorted = (Array.isArray(rawSegments) ? rawSegments : [])
     .map((segment, index) => {
@@ -150,6 +179,7 @@ export function normalizeTimedCaptionSegments(rawSegments = []) {
       return text ? { ...segment, number: index + 1, startTime, endTime, durationSeconds: endTime - startTime, text } : null;
     })
     .filter(Boolean)
+    .flatMap((segment) => splitLongTimedCaptionSegment(segment))
     .sort((a, b) => a.startTime - b.startTime);
   let previousEnd = 0;
   return sorted.map((segment, index) => {
@@ -159,7 +189,6 @@ export function normalizeTimedCaptionSegments(rawSegments = []) {
     if (Number.isFinite(nextStart) && nextStart > startTime) {
       endTime = Math.min(endTime, Math.max(startTime + 0.45, nextStart - 0.03));
     }
-    endTime = Math.min(endTime, startTime + 5.8);
     if (endTime <= startTime + 0.3) {
       endTime = startTime + 0.45;
     }
@@ -251,6 +280,22 @@ export function splitIntoCaptionLines(text) {
   return chunks.filter(Boolean);
 }
 
+export function captionTranscriptSimilarity(transcript, captionText) {
+  const normalize = (value) =>
+    stripTagsForSpeech(value)
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((word) => word.length > 2);
+  const transcriptWords = new Set(normalize(transcript));
+  const captionWords = normalize(captionText);
+  if (!transcriptWords.size || !captionWords.length) {
+    return 0;
+  }
+  const matches = captionWords.filter((word) => transcriptWords.has(word)).length;
+  return matches / captionWords.length;
+}
+
 export function estimateSrtFromText(text, durationSeconds = 0) {
   const lines = splitIntoCaptionLines(text);
   const totalWords = Math.max(1, lines.join(" ").split(/\s+/).filter(Boolean).length);
@@ -277,9 +322,13 @@ export async function generateAudioAwareSrt({ keyInfo, audioBase64, mimeType, sc
   if (!audioBase64 || !keyInfo?.apiKey) {
     return estimateSrtFromText(screenplay, durationSeconds);
   }
+  const transcript = stripTagsForSpeech(screenplay);
   const prompt = `
 You are a subtitle timing editor for fast football short videos.
 Listen to the audio and create accurate English SRT-style caption segments.
+
+Expected transcript, for wording only:
+${transcript}
 
 Rules:
 - Output JSON only.
@@ -288,6 +337,7 @@ Rules:
 - Segment duration should usually be 1.0 to 3.5 seconds.
 - Do not leave large silent gaps unless there is actual silence.
 - Preserve spoken words. Do not add facts.
+- Captions must use only words that are actually spoken in the expected transcript.
 
 Return:
 {
@@ -321,6 +371,10 @@ Return:
     );
     if (!segments.length) {
       throw new Error("No valid SRT segments returned.");
+    }
+    const similarity = captionTranscriptSimilarity(transcript, segments.map((segment) => segment.text).join(" "));
+    if (similarity < 0.62) {
+      throw new Error(`Audio-aware SRT drifted from transcript (similarity ${similarity.toFixed(2)}).`);
     }
     return {
       audioSummary: result.json.audioSummary || "",
