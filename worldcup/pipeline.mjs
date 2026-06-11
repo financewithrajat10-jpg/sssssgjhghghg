@@ -356,12 +356,23 @@ async function generateWorldCupRun(input = {}) {
   await saveRun(run);
 
   if (options.render && run.status === "generated") {
-    await renderWorldCupRun(run.id, input);
+    run = await renderWorldCupRun(run.id, input);
   } else if (options.render && run.status === "needs_visual_review") {
     run.warnings.push("Render skipped because visual retries still left fallback boards. Script, TTS, and SRT were preserved.");
     await saveRun(run);
   }
   if (options.upload) {
+    if (options.render && !run.files?.mp4) {
+      throw new WorldCupError("Refusing to upload World Cup run because no MP4 was rendered.", {
+        status: 422,
+        code: "WORLD_CUP_UPLOAD_REQUIRES_RENDERED_MP4",
+        details: {
+          runId: run.id,
+          status: run.status,
+          hint: "Fix visual sourcing/rendering first, or run upload without render only when sidecar-only delivery is intentional.",
+        },
+      });
+    }
     await uploadWorldCupRun(run.id, input);
   }
     run = await readWorldCupRun(run.id);

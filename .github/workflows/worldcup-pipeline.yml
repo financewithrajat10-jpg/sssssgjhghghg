@@ -42,11 +42,11 @@ on:
       upload_target:
         description: "auto, telegram, google-drive, or r2"
         required: false
-        default: "auto"
+        default: "telegram"
       force:
         description: "Ignore daily limit"
         required: false
-        default: "false"
+        default: "true"
 
 permissions:
   contents: read
@@ -104,6 +104,8 @@ env:
   WORLD_CUP_BGM_MODE: ${{ vars.WORLD_CUP_BGM_MODE || 'auto' }}
   WORLD_CUP_BGM_VOLUME: ${{ vars.WORLD_CUP_BGM_VOLUME || '0.20' }}
   WORLD_CUP_BGM_FILE: ${{ vars.WORLD_CUP_BGM_FILE }}
+  WORLD_CUP_ENABLE_WIKIMEDIA_VISUALS: ${{ vars.WORLD_CUP_ENABLE_WIKIMEDIA_VISUALS || 'false' }}
+  WORLD_CUP_MIN_REAL_VISUAL_RATIO: ${{ vars.WORLD_CUP_MIN_REAL_VISUAL_RATIO || '1' }}
   GEMINI_LITE_TEXT_MODEL: ${{ vars.GEMINI_LITE_TEXT_MODEL || 'gemini-3.1-flash-lite' }}
   GEMINI_RETRY_DELAYS: ${{ vars.GEMINI_RETRY_DELAYS || '5000,10000,15000' }}
   WORLD_CUP_TOPICS: ${{ vars.WORLD_CUP_TOPICS }}
@@ -163,6 +165,20 @@ jobs:
           --upload "$INPUT_UPLOAD"
           --upload-target "$INPUT_UPLOAD_TARGET"
           --force "$INPUT_FORCE"
+
+      - name: Notify Telegram on pipeline failure
+        if: failure() && env.TELEGRAM_BOT_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''
+        shell: bash
+        run: |
+          TEXT="World Cup pipeline failed.
+          Repo: ${GITHUB_REPOSITORY}
+          Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          Check artifacts/logs before posting."
+          ARGS=(-F "chat_id=${TELEGRAM_CHAT_ID}" -F "text=${TEXT}")
+          if [ -n "${TELEGRAM_THREAD_ID:-}" ]; then
+            ARGS+=(-F "message_thread_id=${TELEGRAM_THREAD_ID}")
+          fi
+          curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" "${ARGS[@]}"
 
       - name: Upload debug artifacts
         uses: actions/upload-artifact@v5

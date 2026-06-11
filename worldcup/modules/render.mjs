@@ -862,6 +862,17 @@ export async function renderWorldCupRun(id, options = {}) {
         } else if (safeSelectedClip?.url) {
           segmentPath = await renderClipSegment(ffmpegPath, tempDir, safeSelectedClip.url, segment, index);
         } else {
+          if (!allowFallbackVisuals) {
+            throw new WorldCupError("Refusing to render fallback card for a World Cup segment without a safe clip or image.", {
+              status: 422,
+              code: "WORLD_CUP_RENDER_FALLBACK_CARD_BLOCKED",
+              details: {
+                segmentNumber: segment.number || index + 1,
+                captionText: segment.captionText || segment.text || "",
+                hint: "Rebuild visuals or pass allowFallbackVisuals=true only for local layout tests.",
+              },
+            });
+          }
           segmentPath = await renderFallbackCard(ffmpegPath, tempDir, segment, index);
         }
         segmentPaths.push(segmentPath);
@@ -880,10 +891,33 @@ export async function renderWorldCupRun(id, options = {}) {
         });
       } catch (error) {
         renderLog.warnings.push(`Segment ${segment.number || index + 1} used fallback: ${error.message}`);
+        if (!allowFallbackVisuals) {
+          if (error instanceof WorldCupError) {
+            throw error;
+          }
+          throw new WorldCupError("Failed to render a safe real visual segment for the World Cup MP4.", {
+            status: 422,
+            code: "WORLD_CUP_RENDER_SEGMENT_VISUAL_FAILED",
+            details: {
+              segmentNumber: segment.number || index + 1,
+              originalError: error.message,
+              hint: "Rebuild visuals or pass allowFallbackVisuals=true only for local layout tests.",
+            },
+          });
+        }
         segmentPaths.push(await renderFallbackCard(ffmpegPath, tempDir, segment, index));
       }
     }
     if (!segmentPaths.length) {
+      if (!allowFallbackVisuals) {
+        throw new WorldCupError("Refusing to render World Cup MP4 without real visual segments.", {
+          status: 422,
+          code: "WORLD_CUP_RENDER_NO_REAL_VISUAL_SEGMENTS",
+          details: {
+            hint: "Fix visual sourcing first, or pass allowFallbackVisuals=true only for local layout tests.",
+          },
+        });
+      }
       const fallback = estimateSrtFromText(run.tts?.screenplay || run.selectedScript?.text || "World Cup Chaos Desk", 45);
       for (const [index, segment] of fallback.segments.entries()) {
         segmentPaths.push(await renderFallbackCard(ffmpegPath, tempDir, { ...segment, captionText: segment.text, fallbackVisual: fallbackVisualForSegment(segment, run.evidence || {}) }, index));
