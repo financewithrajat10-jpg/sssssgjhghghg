@@ -44,6 +44,7 @@ import {
   WORLD_CUP_DRIVE_FALLBACK_TELEGRAM,
   WORLD_CUP_ENABLE_BGM,
   WORLD_CUP_ENABLE_LOCAL_ENTITY_ASSETS,
+  WORLD_CUP_ENABLE_WIKIMEDIA_VISUALS,
   WORLD_CUP_LOCAL_ENTITY_CANDIDATES_PER_ENTITY,
   WORLD_CUP_LOCAL_ENTITY_MAX_ENTITIES,
   WORLD_CUP_LOCAL_ENTITY_MIN_SCORE,
@@ -228,6 +229,11 @@ export function commonsAssetFromImageInfo({ page, info, sourcePlayer = "", sourc
   }
   const url = info.thumburl || info.url;
   const title = cleanText(metadata.ObjectName?.value || page?.title || query);
+  const description = stripHtml(metadata.ImageDescription?.value || "");
+  const pageTitle = cleanText(page?.title || "");
+  if (isWrongCommonsFootballResult({ title, description, pageTitle, query, sourcePlayer, sourceTeam })) {
+    return null;
+  }
   return {
     id: `wikimedia-${hashText(url)}`,
     type: "image",
@@ -243,6 +249,27 @@ export function commonsAssetFromImageInfo({ page, info, sourcePlayer = "", sourc
     sourceTeam,
     query,
   };
+}
+
+export function isWrongCommonsFootballResult({ title = "", description = "", pageTitle = "", query = "", sourcePlayer = "", sourceTeam = "" } = {}) {
+  const requestedFootballProof = /\b(football|footballer|soccer|player|team|national|world cup|fifa|uefa|club|fc)\b/i.test(`${query} ${sourcePlayer} ${sourceTeam}`);
+  if (!requestedFootballProof) {
+    return false;
+  }
+  const assetText = cleanText(`${title} ${description} ${pageTitle}`).toLowerCase();
+  const hasFootballContext = /\b(football|footballer|soccer|futbol|fútbol|player|team|club|fc|f\.c\.|stadium|match|training|cup|league|uefa|fifa|la liga|premier league|national team)\b/i.test(assetText);
+  const looksLikeBiologyOrSpecimen = /\b(fish|species|specimen|museum|zoolog|taxonomy|genus|female|male|bird|insect|plant|flora|fauna|mammal|reptile|amphibian|frog|lizard|snake|beetle|butterfly|moth|astyanax|herbarium|fossil|mc[nz]?\s*\d+)\b/i.test(assetText);
+  const hasRequestedName = [sourcePlayer, sourceTeam]
+    .map(cleanText)
+    .filter((value) => value.length >= 3)
+    .some((value) => new RegExp(`\\b${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(assetText));
+  if (looksLikeBiologyOrSpecimen && !hasFootballContext) {
+    return true;
+  }
+  if (sourcePlayer && !hasRequestedName && !hasFootballContext) {
+    return true;
+  }
+  return false;
 }
 
 export async function searchLicensedCommonsImage(query, { sourcePlayer = "", sourceTeam = "" } = {}) {
@@ -1082,8 +1109,8 @@ Use only a generic safety/relevance check. Do not claim legal certainty.
 Task:
 - Check whether each candidate visually fits the World Cup/football script.
 - Flag obvious generic risks: watermark, broadcast screenshot, Getty/AP/FIFA source, visible official logo/crest focus, wrong sport, unrelated gym/MMA/bodybuilding, low relevance.
-- Do not reject Wikimedia/Pexels/Pixabay only because a player/team appears. Use the source/license metadata.
-- Prefer real team/player Wikimedia images when license metadata is valid and relevance is high.
+- Do not reject Pexels/Pixabay clips only because a player/team appears. Use the source/license metadata.
+- Production visuals should prefer football/stadium/fan clips; local player/team images are added later as overlays from the local downloads library.
 
 Evidence/topic:
 ${JSON.stringify({ topic: evidence.topic, match: evidence.match, keyPlayers: evidence.keyPlayers, selectedScript: selectedScript?.text }, null, 2)}
@@ -1154,8 +1181,8 @@ ${JSON.stringify(
 )}
 
 Rules:
-- Prefer real licensed Wikimedia team/player images for the first 1-2 proof beats.
 - Prefer football/stadium/fan clips over generic intensity clips.
+- Local player/team images are overlaid separately, so do not prefer standalone image candidates over useful clips.
 - Avoid off-topic gym, MMA, bodybuilding, baseball, basketball, cricket.
 - Ask for retry queries when no candidate supports a key joke or hook.
 
@@ -1306,6 +1333,10 @@ export async function loadLocalAssetPackAssets(evidence) {
 }
 
 export async function resolveWikimediaVisualAssets(evidence) {
+  if (!WORLD_CUP_ENABLE_WIKIMEDIA_VISUALS) {
+    const localAssets = await loadLocalAssetPackAssets(evidence);
+    return { assets: localAssets.assets.map((asset) => ({ ...asset, backupOnly: true })), attributions: localAssets.attributions };
+  }
   const assets = [];
   const attributions = [];
   const keyPlayers = (Array.isArray(evidence.keyPlayers) ? evidence.keyPlayers : []).slice(0, 6);
@@ -1621,7 +1652,7 @@ export async function searchStockCandidatesParallel({ queries, pexelsKey, pixaba
 
 export async function scoutWorldCupVisualAssets({ evidence, selectedScript, keyInfo, options, warnings }) {
   const startedAt = nowIso();
-  const wikimedia = options.offline ? { assets: [], attributions: [] } : await resolveWikimediaVisualAssets(evidence);
+  const wikimedia = options.offline || !WORLD_CUP_ENABLE_WIKIMEDIA_VISUALS ? { assets: [], attributions: [] } : await resolveWikimediaVisualAssets(evidence);
   const pexelsKey = await getActiveStockKey("pexels");
   const pixabayKey = await getActiveStockKey("pixabay");
   const queries = scriptVisualScoutQueries(selectedScript, evidence);
@@ -1939,12 +1970,12 @@ export function imageProofShouldOverrideClip({ image, clip, segment, evidence, i
 
 export async function buildVisualPlan({ evidence, srtSegments, keyInfo, options, warnings, visualScout = null, selectedScript = null }) {
   const attributions = [];
-  let wikimediaAssets = Array.isArray(visualScout?.wikimediaAssets) ? visualScout.wikimediaAssets : [];
+  let wikimediaAssets = WORLD_CUP_ENABLE_WIKIMEDIA_VISUALS && Array.isArray(visualScout?.wikimediaAssets) ? visualScout.wikimediaAssets : [];
   const localEntityLayer = await buildLocalEntityLayer({ evidence, srtSegments, selectedScript, keyInfo, options, warnings });
   const memory = await loadWorldCupMemory({ excludeId: options.id, limit: 12 });
   const memoryAssetIds = new Set(memory.visualAssetIds || []);
   const usedAssetIds = new Set();
-  if (!wikimediaAssets.length && !visualScout && !options.offline) {
+  if (WORLD_CUP_ENABLE_WIKIMEDIA_VISUALS && !wikimediaAssets.length && !visualScout && !options.offline) {
     const resolved = await resolveWikimediaVisualAssets(evidence);
     wikimediaAssets = resolved.assets;
     attributions.push(...resolved.attributions);
@@ -2006,8 +2037,6 @@ export async function buildVisualPlan({ evidence, srtSegments, keyInfo, options,
     if (entityOverlay?.assets?.length) {
       if (selectedClip) {
         selectedImage = null;
-      } else {
-        selectedImage = entityOverlay.assets[0].asset;
       }
       for (const overlayItem of entityOverlay.assets) {
         attributions.push({

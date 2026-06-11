@@ -44,6 +44,7 @@ import {
   WORLD_CUP_DRIVE_FALLBACK_TELEGRAM,
   WORLD_CUP_ENABLE_BGM,
   WORLD_CUP_ENABLE_LOCAL_ENTITY_ASSETS,
+  WORLD_CUP_LOCAL_ENTITY_OVERLAY_SCREEN_RATIO,
   WORLD_CUP_LOCAL_ENTITY_CANDIDATES_PER_ENTITY,
   WORLD_CUP_LOCAL_ENTITY_MAX_ENTITIES,
   WORLD_CUP_LOCAL_ENTITY_MIN_SCORE,
@@ -420,6 +421,29 @@ export async function renderClipSegment(ffmpegPath, tempDir, clipUrl, segment, i
   return out;
 }
 
+function evenDimension(value) {
+  return Math.max(2, Math.round(Number(value || 0) / 2) * 2);
+}
+
+function localEntityOverlayLayout(count = 1) {
+  const targetArea = VIDEO_WIDTH * VIDEO_HEIGHT * WORLD_CUP_LOCAL_ENTITY_OVERLAY_SCREEN_RATIO;
+  if (count <= 1) {
+    const cardW = evenDimension(Math.min(VIDEO_WIDTH - 80, 1000));
+    const cardH = evenDimension(Math.min(VIDEO_HEIGHT - 260, targetArea / cardW));
+    const cardX = evenDimension((VIDEO_WIDTH - cardW) / 2);
+    const cardY = evenDimension((VIDEO_HEIGHT - cardH) / 2 - 20);
+    return { cardW, cardH, cardX, cardY, imageW: cardW - 40, imageH: cardH - 40 };
+  }
+  const cardW = evenDimension(Math.min(VIDEO_WIDTH - 40, 1040));
+  const cardH = evenDimension(Math.min(VIDEO_HEIGHT - 300, targetArea / cardW));
+  const cardX = evenDimension((VIDEO_WIDTH - cardW) / 2);
+  const cardY = evenDimension((VIDEO_HEIGHT - cardH) / 2 - 10);
+  const gap = 20;
+  const panelW = evenDimension((cardW - 60 - gap) / 2);
+  const panelH = cardH - 60;
+  return { cardW, cardH, cardX, cardY, gap, panelW, panelH };
+}
+
 export async function renderClipSegmentWithEntityOverlay(ffmpegPath, tempDir, clipUrl, segment, index) {
   const overlayItems = Array.isArray(segment.entityOverlay?.assets) ? segment.entityOverlay.assets.filter((item) => item?.asset?.url).slice(0, 2) : [];
   if (!overlayItems.length) {
@@ -441,15 +465,20 @@ export async function renderClipSegmentWithEntityOverlay(ffmpegPath, tempDir, cl
   const filters = [bg];
   let last = "bg";
   if (imagePaths.length === 1) {
-    filters.push("[1:v]scale=820:980:force_original_aspect_ratio=decrease,pad=860:1020:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[entity1]");
-    filters.push(`[${last}]drawbox=x=90:y=135:w=900:h=1100:color=black@0.28:t=fill[cardbg]`);
-    filters.push("[cardbg][entity1]overlay=x=(W-w)/2:y=175,format=yuv420p[vout]");
+    const layout = localEntityOverlayLayout(1);
+    filters.push(`[1:v]scale=${layout.imageW}:${layout.imageH}:force_original_aspect_ratio=decrease,pad=${layout.cardW}:${layout.cardH}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[entity1]`);
+    filters.push(`[${last}]drawbox=x=${layout.cardX}:y=${layout.cardY}:w=${layout.cardW}:h=${layout.cardH}:color=black@0.28:t=fill[cardbg]`);
+    filters.push(`[cardbg][entity1]overlay=x=${layout.cardX}:y=${layout.cardY},format=yuv420p[vout]`);
   } else {
-    filters.push("[1:v]scale=500:760:force_original_aspect_ratio=decrease,pad=500:780:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[entity1]");
-    filters.push("[2:v]scale=500:760:force_original_aspect_ratio=decrease,pad=500:780:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[entity2]");
-    filters.push(`[${last}]drawbox=x=25:y=190:w=1030:h=860:color=black@0.28:t=fill[splitbg]`);
-    filters.push("[splitbg][entity1]overlay=x=35:y=230[tmp1]");
-    filters.push("[tmp1][entity2]overlay=x=545:y=230,format=yuv420p[vout]");
+    const layout = localEntityOverlayLayout(2);
+    const firstX = layout.cardX + 30;
+    const secondX = firstX + layout.panelW + layout.gap;
+    const panelY = layout.cardY + 30;
+    filters.push(`[1:v]scale=${layout.panelW}:${layout.panelH}:force_original_aspect_ratio=decrease,pad=${layout.panelW}:${layout.panelH}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[entity1]`);
+    filters.push(`[2:v]scale=${layout.panelW}:${layout.panelH}:force_original_aspect_ratio=decrease,pad=${layout.panelW}:${layout.panelH}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[entity2]`);
+    filters.push(`[${last}]drawbox=x=${layout.cardX}:y=${layout.cardY}:w=${layout.cardW}:h=${layout.cardH}:color=black@0.28:t=fill[splitbg]`);
+    filters.push(`[splitbg][entity1]overlay=x=${firstX}:y=${panelY}[tmp1]`);
+    filters.push(`[tmp1][entity2]overlay=x=${secondX}:y=${panelY},format=yuv420p[vout]`);
   }
   await execFileAsync(
     ffmpegPath,

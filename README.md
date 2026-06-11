@@ -128,8 +128,8 @@ Pipeline stages:
 - Writes three styles: `serious_analyst`, `funny_fan_analyst`, and `dramatic_storyteller`.
 - Judges the three scripts and rewrites the winner into a Gemini TTS-ready screenplay with light tags.
 - Generates one Gemini TTS take, creates audio-aware SRT when audio is available, and falls back to script timing when needed.
-- Resolves safe visuals from Wikimedia/Wikidata/Commons, Pexels/Pixabay, and local tactical/card fallbacks.
-- Starts a parallel visual-scout branch after script selection so player/team images and stock clips are searched while TTS/SRT work continues.
+- Resolves moving visuals from Pexels/Pixabay clips, then places matching local player/team images as large overlays above the clip when available.
+- Starts a parallel visual-scout branch after script selection so stock clips and local entity overlays are prepared while TTS/SRT work continues.
 - Renders vertical 1080x1920 H.264/AAC MP4 with creator-yellow slide-lift captions.
 - Refuses normal MP4 export when generated TTS audio is missing, or when real image/clip coverage is below `WORLD_CUP_MIN_REAL_VISUAL_RATIO`.
 - Sends MP4 and key sidecars through the configured `auto` upload target. `auto` prefers Telegram when bot secrets are present, then Google Drive, then R2.
@@ -151,7 +151,8 @@ Default World Cup models:
 - Evidence now uses multiple grounded research passes, then a separate JSON consolidation pass so malformed search-grounded text does not create fake-specific stats.
 - World Cup runs keep light memory of recent topics, hooks, angles, and visual assets to reduce repeated ideas and repeated stock clips.
 - Visual selection dedupes clips within the run, avoids recently used clips where possible, uses player/team-aware queries for USMNT and other team-focused topics, and tries a backup football clip before falling back to a board.
-- Real player/team images are limited to license-tracked Wikimedia/Commons assets by default. Gemma visual review (`WORLD_CUP_VISUAL_REVIEW_MODEL`, default `gemma-4-26b-a4b-it`) performs a generic logo/watermark/off-topic/source-risk check; Gemini 2.5 Flash Lite (`WORLD_CUP_VISUAL_SELECTION_MODEL`) then reviews relevance and can request retry searches, falling back to `WORLD_CUP_VISUAL_SELECTION_FALLBACK_MODELS` on quota/server errors.
+- Live Wikimedia/Commons player images are off by default with `WORLD_CUP_ENABLE_WIKIMEDIA_VISUALS=false`. Production runs prefer stock clips plus local entity images from your downloads library as overlays; set `WORLD_CUP_LOCAL_ENTITY_OVERLAY_SCREEN_RATIO=0.72` to keep those overlays around 70-75% of the frame.
+- Gemma visual review (`WORLD_CUP_VISUAL_REVIEW_MODEL`, default `gemma-4-26b-a4b-it`) performs a generic logo/watermark/off-topic/source-risk check; Gemini 2.5 Flash Lite (`WORLD_CUP_VISUAL_SELECTION_MODEL`) then reviews relevance and can request retry searches, falling back to `WORLD_CUP_VISUAL_SELECTION_FALLBACK_MODELS` on quota/server errors.
 - Local asset packs can be built from the dashboard or CLI. They save reviewed Wikimedia images under `.tmp-worldcup/asset-packs/` and index reviewed stock candidates for future runs.
 - Caption design now uses `WORLD_CUP_CAPTION_DESIGN_MODEL` to choose per-SRT emphasis words and animation style. Mid-screen punchlines are off by default to avoid duplicate-looking captions; set `WORLD_CUP_CAPTION_MIDSCREEN=auto` or `on` only when you want that optional treatment.
 - TTS audio stays on `gemini-3.1-flash-tts-preview` by default because TTS audio models are separate from text-out Lite models.
@@ -172,7 +173,7 @@ Build local packs for major World Cup teams:
 npm run worldcup -- --major-asset-packs --limit 6 --players-per-team 4 --stock false
 ```
 
-Asset-pack discovery uses `WORLD_CUP_ASSET_SEARCH_MODEL` first, default `gemini-2.5-pro`, then falls back to the configured lower-quota models and curated team/player seeds. Production visual planning still uses both local asset packs and live online sourcing from Wikimedia/Commons, Pexels, and Pixabay.
+Asset-pack discovery uses `WORLD_CUP_ASSET_SEARCH_MODEL` first, default `gemini-2.5-pro`, then falls back to the configured lower-quota models and curated team/player seeds. Production visual planning now keeps Wikimedia/Commons live image sourcing disabled by default and uses Pexels/Pixabay clips plus local entity image overlays.
 
 Render with mid-screen punchlines disabled:
 
