@@ -206,16 +206,86 @@ function scoreYouTubeVideo(video) {
   return Math.round(Math.min(100, velocityScore + commentScore + recognizability + debate + freshness + 10));
 }
 
+function rejectedYouTubeTrendReason(video) {
+  const title = cleanText(video.title).toLowerCase();
+  if (/\b(efootball|pes\s?\d*|video game|simulation|simulated|gameplay|watch along|watchalong)\b/i.test(title)) {
+    return "gaming/simulation/watchalong video";
+  }
+  if (/\bfifa\s?\d+\b/i.test(title) && /\b(game|simulation|simulated|gameplay|live)\b/i.test(title)) {
+    return "gaming/simulation watch signal";
+  }
+  if (/^\s*(🔴|live\b|\[live\])|full match|live stream|stream commentary|trực tiếp/i.test(video.title || "")) {
+    return "live/full-match stream";
+  }
+  if (video.comments <= 1 && video.views > 100000) {
+    return "suspicious low-comment velocity";
+  }
+  const asciiLetters = (video.title.match(/[A-Za-z]/g) || []).length;
+  const totalLetters = (video.title.match(/\p{L}/gu) || []).length || 1;
+  if (asciiLetters / totalLetters < 0.45) {
+    return "not enough English-language signal";
+  }
+  const entityPattern =
+    /\b(usa|usmnt|paraguay|mexico|south africa|korea|czechia|czech republic|canada|brazil|argentina|uruguay|colombia|england|france|spain|germany|portugal|messi|ronaldo|neymar|mbappe|pulisic|bellingham|shakira|opening ceremony|fixture|schedule|lineup|injury|prediction|highlights?)\b/i;
+  if (!entityPattern.test(video.title || "")) {
+    return "generic football hashtag without a strong entity";
+  }
+  if (/^#|#football|#worldcup/i.test(title) && title.split(/\s+/).length < 8) {
+    return "hashtag-only generic topic";
+  }
+  return "";
+}
+
+function topicFromYouTubeVideo(video) {
+  const title = cleanText(video.title)
+    .replace(/[🔴🏆⚽🔥☠️😱🥰🤠🚨🇦-🇿]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const scoreMatch = title.match(/\b([A-Z][A-Za-z .'-]{2,24})\s+\d+\s*[-:]\s*\d+\s+([A-Z][A-Za-z .'-]{2,24})\b/);
+  if (scoreMatch) {
+    const teamA = cleanText(scoreMatch[1].replace(/^Highlights?\s*/i, ""));
+    const teamB = cleanText(scoreMatch[2]);
+    return {
+      type: "postmatch",
+      topic: `${teamA} vs ${teamB} post-match: the moment that changed the game`,
+      teamA,
+      teamB,
+    };
+  }
+  const match = title.match(/\b([A-Z][A-Za-z .'-]{2,24})\s+(?:vs|v|versus|-)\s+([A-Z][A-Za-z .'-]{2,24})\b/);
+  if (match) {
+    const teamA = cleanText(match[1]);
+    const teamB = cleanText(match[2]);
+    return {
+      topic: `${teamA} vs ${teamB}: the pressure angle fans are already arguing about`,
+      teamA,
+      teamB,
+    };
+  }
+  return { topic: title.slice(0, 120), teamA: "", teamB: "" };
+}
+
 async function buildYouTubeCandidates(config, warnings) {
   const all = [];
+  const seenVideoIds = new Set();
   for (const query of youtubeQueries()) {
     try {
       const videos = await youtubeSearch(config, query);
       for (const video of videos) {
+        if (seenVideoIds.has(video.id)) continue;
+        seenVideoIds.add(video.id);
+        const rejected = rejectedYouTubeTrendReason(video);
+        if (rejected) {
+          warnings.push(`Rejected YouTube trend "${video.title}": ${rejected}.`);
+          continue;
+        }
         const score = scoreYouTubeVideo(video);
+        const topic = topicFromYouTubeVideo(video);
         all.push({
-          type: "pre-tournament",
-          topic: video.title,
+          type: topic.type || "pre-tournament",
+          topic: topic.topic,
+          teamA: topic.teamA,
+          teamB: topic.teamB,
           score,
           reason: `YouTube velocity signal from ${video.channelTitle || "recent video"} (${video.views} views, ${video.comments} comments).`,
           source: "youtube",

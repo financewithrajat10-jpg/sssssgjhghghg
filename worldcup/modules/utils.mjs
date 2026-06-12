@@ -117,7 +117,7 @@ export const WORLD_CUP_VOICES = [
 ];
 
 export function loadLocalEnvFiles() {
-  for (const fileName of [".env.local", ".env"]) {
+  for (const fileName of [".env.local", ".env.azure-controller", ".env"]) {
     const filePath = path.join(repoRoot, fileName);
     if (!fsSync.existsSync(filePath)) {
       continue;

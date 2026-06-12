@@ -1,4 +1,5 @@
 .env
+.env.azure-controller
 .gemini-keys.json
 .stock-keys.json
 node_modules/
