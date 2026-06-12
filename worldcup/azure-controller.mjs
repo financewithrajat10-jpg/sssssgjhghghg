@@ -490,6 +490,8 @@ async function runControllerOnce(config) {
   state.scans = [scan, ...(state.scans || [])].slice(0, 200);
   let dispatch = null;
   if (!selected) {
+    state.lastStatus = "skipped";
+    state.lastScanCompletedAt = nowIso();
     await writeJsonFile(config.stateFile, state);
     await sendTelegram(config, `World Cup controller checked trends: no candidate crossed ${config.trendThreshold}. Top score: ${candidates[0]?.score || 0}.`).catch(() => null);
     return { skipped: true, reason: "No non-duplicate candidate crossed threshold.", scan };
@@ -497,6 +499,8 @@ async function runControllerOnce(config) {
   if (config.dryRun) {
     dispatch = { dryRun: true, inputs: workflowInputs(selected) };
     scan.dispatch = dispatch;
+    state.lastStatus = "dry_run_selected";
+    state.lastScanCompletedAt = nowIso();
     await writeJsonFile(config.stateFile, state);
     return { skipped: false, selected, dispatch, scan };
   }
@@ -504,9 +508,16 @@ async function runControllerOnce(config) {
   const dispatchedAt = nowIso();
   try {
     dispatch = await dispatchWorkflow(config, selected);
+    markDispatched(state, selected, dispatch);
+    scan.dispatch = dispatch;
+    state.lastStatus = "workflow_dispatched";
+    state.lastDispatchAt = dispatch.dispatchedAt;
+    await writeJsonFile(config.stateFile, state);
   } catch (error) {
     dispatch = { error: error.message, attemptedAt: dispatchedAt, inputs: workflowInputs(selected) };
     scan.dispatch = dispatch;
+    state.lastStatus = "dispatch_failed";
+    state.lastError = error.message;
     await writeJsonFile(config.stateFile, state);
     await sendTelegram(config, `World Cup controller could not trigger GitHub: ${error.message}`).catch(() => null);
     return { skipped: false, selected, dispatch, scan, error: error.message };
@@ -540,6 +551,8 @@ async function runControllerOnce(config) {
   }
   markDispatched(state, selected, dispatch);
   scan.dispatch = dispatch;
+  state.lastStatus = dispatch.workflowRun?.conclusion === "success" ? "workflow_completed" : "workflow_finished";
+  state.lastWorkflowCompletedAt = nowIso();
   await writeJsonFile(config.stateFile, state);
   return { skipped: false, selected, dispatch, scan };
 }
