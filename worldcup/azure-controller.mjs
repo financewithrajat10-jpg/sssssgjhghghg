@@ -463,7 +463,7 @@ function candidateGate(candidate, state, config, now = new Date()) {
   if (candidate.duplicate) {
     reasons.push("duplicate candidate already dispatched");
   }
-  if (stats.total >= config.dailyTotalLimit) {
+  if (!isFixtureCandidate && stats.total >= config.dailyTotalLimit) {
     reasons.push(`daily total limit reached (${stats.total}/${config.dailyTotalLimit})`);
   }
   if (isFixtureCandidate) {
