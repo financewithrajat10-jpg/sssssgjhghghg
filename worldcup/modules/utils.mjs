@@ -39,6 +39,10 @@ export const WRITER_MODEL = process.env.WORLD_CUP_WRITER_MODEL || LITE_TEXT_MODE
 export const EVALUATOR_MODEL = process.env.WORLD_CUP_EVALUATOR_MODEL || LITE_TEXT_MODEL;
 export const TTS_REWRITE_MODEL = process.env.WORLD_CUP_TTS_REWRITE_MODEL || WRITER_MODEL;
 export const TTS_MODEL = process.env.WORLD_CUP_TTS_MODEL || "gemini-3.1-flash-tts-preview";
+export const TTS_FALLBACK_MODELS = String(process.env.WORLD_CUP_TTS_FALLBACK_MODELS || "gemini-2.5-flash-preview-tts,gemini-2.5-flash-tts-preview")
+  .split(",")
+  .map((model) => model.trim())
+  .filter(Boolean);
 export const AUDIO_SRT_MODEL = process.env.WORLD_CUP_AUDIO_SRT_MODEL || LITE_TEXT_MODEL;
 export const AUDIO_SRT_FALLBACK_MODELS = String(process.env.WORLD_CUP_AUDIO_SRT_FALLBACK_MODELS || "gemini-2.5-flash")
   .split(",")
@@ -910,43 +914,58 @@ Voice style:
 ${screenplay}
 `.trim();
 
-  const data = await requestGeminiGenerateContent({
-    keyInfo,
-    model: TTS_MODEL,
-    body: {
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        responseModalities: ["AUDIO"],
-        temperature: 1.1,
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: selectedVoice },
+  const models = [...new Set([TTS_MODEL, ...TTS_FALLBACK_MODELS])].filter(Boolean);
+  const errors = [];
+  for (const model of models) {
+    try {
+      const data = await requestGeminiGenerateContent({
+        keyInfo,
+        model,
+        body: {
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseModalities: ["AUDIO"],
+            temperature: 1.1,
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName: selectedVoice },
+              },
+            },
           },
+          model,
         },
-      },
-      model: TTS_MODEL,
-    },
-  });
-  const inlineData = data?.candidates?.[0]?.content?.parts?.find((part) => part.inlineData)?.inlineData;
-  if (!inlineData?.data) {
-    throw new WorldCupError("Gemini TTS did not return audio data.", {
-      status: 502,
-      code: "NO_AUDIO_RETURNED",
-      provider: "gemini",
-      model: TTS_MODEL,
-      details: data,
-    });
+      });
+      const inlineData = data?.candidates?.[0]?.content?.parts?.find((part) => part.inlineData)?.inlineData;
+      if (!inlineData?.data) {
+        throw new WorldCupError("Gemini TTS did not return audio data.", {
+          status: 502,
+          code: "NO_AUDIO_RETURNED",
+          provider: "gemini",
+          model,
+          details: data,
+        });
+      }
+      const rawAudio = Buffer.from(inlineData.data, "base64");
+      const mimeType = inlineData.mimeType || "audio/pcm";
+      const audio = mimeType.includes("wav") ? rawAudio : createWavBuffer(rawAudio);
+      return {
+        audio,
+        mimeType: "audio/wav",
+        durationSeconds: wavDurationSeconds(audio),
+        voice: selectedVoice,
+        model,
+      };
+    } catch (error) {
+      errors.push(`${model}: ${error.message}`);
+    }
   }
-  const rawAudio = Buffer.from(inlineData.data, "base64");
-  const mimeType = inlineData.mimeType || "audio/pcm";
-  const audio = mimeType.includes("wav") ? rawAudio : createWavBuffer(rawAudio);
-  return {
-    audio,
-    mimeType: "audio/wav",
-    durationSeconds: wavDurationSeconds(audio),
-    voice: selectedVoice,
+  throw new WorldCupError(`All Gemini TTS attempts failed: ${errors.join(" | ")}`, {
+    status: 502,
+    code: "GEMINI_TTS_FALLBACKS_EXHAUSTED",
+    provider: "gemini",
     model: TTS_MODEL,
-  };
+    details: errors,
+  });
 }
 
 

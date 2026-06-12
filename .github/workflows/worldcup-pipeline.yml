@@ -96,6 +96,7 @@ env:
   WORLD_CUP_EVALUATOR_MODEL: ${{ vars.WORLD_CUP_EVALUATOR_MODEL || 'gemini-3.1-flash-lite' }}
   WORLD_CUP_TTS_REWRITE_MODEL: ${{ vars.WORLD_CUP_TTS_REWRITE_MODEL || 'gemini-3.1-flash-lite' }}
   WORLD_CUP_TTS_MODEL: ${{ vars.WORLD_CUP_TTS_MODEL || 'gemini-3.1-flash-tts-preview' }}
+  WORLD_CUP_TTS_FALLBACK_MODELS: ${{ vars.WORLD_CUP_TTS_FALLBACK_MODELS || 'gemini-2.5-flash-preview-tts,gemini-2.5-flash-tts-preview' }}
   WORLD_CUP_AUDIO_SRT_MODEL: ${{ vars.WORLD_CUP_AUDIO_SRT_MODEL || 'gemini-3.1-flash-lite' }}
   WORLD_CUP_AUDIO_SRT_FALLBACK_MODELS: ${{ vars.WORLD_CUP_AUDIO_SRT_FALLBACK_MODELS || 'gemini-2.5-flash' }}
   WORLD_CUP_GEMINI_RETRY_DELAYS: ${{ vars.WORLD_CUP_GEMINI_RETRY_DELAYS || '5000,10000,15000' }}
