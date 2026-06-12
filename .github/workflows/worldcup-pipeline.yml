@@ -43,6 +43,10 @@ on:
         description: "auto, telegram, google-drive, or r2"
         required: false
         default: "telegram"
+      allow_needs_review_upload:
+        description: "Upload private review MP4 even when QC says revise"
+        required: false
+        default: "true"
       force:
         description: "Ignore daily limit"
         required: false
@@ -122,6 +126,7 @@ env:
   INPUT_RENDER: ${{ github.event.inputs.render || 'true' }}
   INPUT_UPLOAD: ${{ github.event.inputs.upload || 'true' }}
   INPUT_UPLOAD_TARGET: ${{ github.event.inputs.upload_target || vars.WORLD_CUP_UPLOAD_TARGET || 'telegram' }}
+  INPUT_ALLOW_NEEDS_REVIEW_UPLOAD: ${{ github.event.inputs.allow_needs_review_upload || (github.event_name == 'workflow_dispatch' && 'true' || 'false') }}
   INPUT_FORCE: ${{ github.event.inputs.force || (github.event_name == 'workflow_dispatch' && 'true' || 'false') }}
 
 jobs:
@@ -168,6 +173,7 @@ jobs:
             --render "$INPUT_RENDER" \
             --upload "$INPUT_UPLOAD" \
             --upload-target "$INPUT_UPLOAD_TARGET" \
+            --allow-needs-review-upload "$INPUT_ALLOW_NEEDS_REVIEW_UPLOAD" \
             --force "$INPUT_FORCE" | tee .tmp-worldcup/last-result.json
 
       - name: Verify MP4 delivery contract
