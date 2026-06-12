@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { path, fs, cleanText, hashText, nowIso, sleep, worldCupRoot, requestGeminiJsonWithFallbacks, getActiveGeminiKey } from "./modules/utils.mjs";
+import { path, fs, cleanText, hashText, nowIso, sleep, repoRoot, worldCupRoot, requestGeminiJsonWithFallbacks, getActiveGeminiKey } from "./modules/utils.mjs";
 import { knownOpeningFixtures } from "./modules/scheduler.mjs";
 
 const DEFAULT_INTERVAL_MINUTES = 15;
@@ -35,6 +35,23 @@ function boolArg(value, fallback = false) {
   if (value === undefined || value === null || value === "") return fallback;
   if (typeof value === "boolean") return value;
   return ["1", "true", "yes", "y", "on"].includes(String(value).trim().toLowerCase());
+}
+
+async function loadControllerEnvFile() {
+  const filePath = path.join(repoRoot, ".env.azure-controller");
+  const text = await fs.readFile(filePath, "utf8").catch(() => "");
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+    const equalsIndex = trimmed.indexOf("=");
+    const key = trimmed.slice(0, equalsIndex).trim();
+    let value = trimmed.slice(equalsIndex + 1).trim();
+    if (!key || process.env[key] !== undefined) continue;
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
 }
 
 function numberArg(value, fallback) {
@@ -512,6 +529,7 @@ async function runControllerOnce(config) {
 }
 
 async function main() {
+  await loadControllerEnvFile();
   const args = parseArgs(process.argv.slice(2));
   const config = controllerConfig(args);
   if (!config.owner || !config.repo) throw new Error("WORLD_CUP_GITHUB_REPO must be owner/repo.");
