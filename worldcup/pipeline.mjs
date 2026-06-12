@@ -42,6 +42,7 @@ import {
   VISUAL_REVIEW_MAX_ITEMS,
   VISUAL_SCOUT_PAGES,
   VISUAL_SCOUT_TIMEOUT_MS,
+  WorldCupError,
   assetPackRoot,
   cleanText,
   createApiUsageLedger,
