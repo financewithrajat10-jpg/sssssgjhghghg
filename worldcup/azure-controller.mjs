@@ -390,6 +390,7 @@ function workflowInputs(candidate) {
     render: "true",
     upload: "true",
     upload_target: "telegram",
+    allow_needs_review_upload: "true",
     force: "true",
   };
 }
