@@ -7,6 +7,7 @@ const DEFAULT_TREND_THRESHOLD = 75;
 const DEFAULT_RETRY_LIMIT = 1;
 const DEFAULT_WORKFLOW_FILE = "worldcup-pipeline.yml";
 const DEFAULT_BRANCH = "main";
+const DEFAULT_FETCH_TIMEOUT_MS = 45000;
 
 function parseArgs(argv) {
   const args = {};
@@ -73,6 +74,7 @@ function controllerConfig(args = {}) {
     trendThreshold: numberArg(args.trendThreshold || process.env.WORLD_CUP_TREND_THRESHOLD, DEFAULT_TREND_THRESHOLD),
     intervalMinutes: Math.max(1, numberArg(args.intervalMinutes || process.env.WORLD_CUP_CONTROLLER_INTERVAL_MINUTES, DEFAULT_INTERVAL_MINUTES)),
     retryLimit: Math.max(0, numberArg(args.retryLimit || process.env.WORLD_CUP_CONTROLLER_RETRY_LIMIT, DEFAULT_RETRY_LIMIT)),
+    fetchTimeoutMs: Math.max(5000, numberArg(args.fetchTimeoutMs || process.env.WORLD_CUP_CONTROLLER_FETCH_TIMEOUT_MS, DEFAULT_FETCH_TIMEOUT_MS)),
     dryRun: boolArg(args.dryRun, false),
     offline: boolArg(args.offline, false),
     once: boolArg(args.once, false),
@@ -178,6 +180,16 @@ function youtubeQueries() {
     .filter(Boolean);
 }
 
+async function fetchWithControllerTimeout(url, options = {}, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function youtubeSearch(config, query) {
   if (!config.youtubeApiKey) return [];
   const publishedAfter = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
@@ -189,7 +201,7 @@ async function youtubeSearch(config, query) {
   searchUrl.searchParams.set("q", query);
   searchUrl.searchParams.set("publishedAfter", publishedAfter);
   searchUrl.searchParams.set("key", config.youtubeApiKey);
-  const searchResponse = await fetch(searchUrl);
+  const searchResponse = await fetchWithControllerTimeout(searchUrl, {}, config.fetchTimeoutMs);
   if (!searchResponse.ok) throw new Error(`YouTube search failed: ${searchResponse.status}`);
   const searchJson = await searchResponse.json();
   const ids = (searchJson.items || []).map((item) => item.id?.videoId).filter(Boolean);
@@ -198,7 +210,7 @@ async function youtubeSearch(config, query) {
   statsUrl.searchParams.set("part", "snippet,statistics");
   statsUrl.searchParams.set("id", ids.join(","));
   statsUrl.searchParams.set("key", config.youtubeApiKey);
-  const statsResponse = await fetch(statsUrl);
+  const statsResponse = await fetchWithControllerTimeout(statsUrl, {}, config.fetchTimeoutMs);
   if (!statsResponse.ok) throw new Error(`YouTube stats failed: ${statsResponse.status}`);
   const statsJson = await statsResponse.json();
   return (statsJson.items || []).map((item) => ({
@@ -397,7 +409,7 @@ function workflowInputs(candidate) {
 
 async function githubRequest(config, pathname, { method = "GET", body = null } = {}) {
   if (!config.githubToken) throw new Error("Missing WORLD_CUP_GITHUB_TOKEN/GITHUB_FINE_GRAINED_PAT/GITHUB_TOKEN.");
-  const response = await fetch(`https://api.github.com${pathname}`, {
+  const response = await fetchWithControllerTimeout(`https://api.github.com${pathname}`, {
     method,
     headers: {
       Accept: "application/vnd.github+json",
@@ -407,7 +419,7 @@ async function githubRequest(config, pathname, { method = "GET", body = null } =
       ...(body ? { "Content-Type": "application/json" } : {}),
     },
     body: body ? JSON.stringify(body) : null,
-  });
+  }, config.fetchTimeoutMs);
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(`GitHub API ${method} ${pathname} failed: ${response.status} ${text.slice(0, 300)}`);
@@ -447,7 +459,7 @@ async function sendTelegram(config, text) {
   form.set("chat_id", config.telegramChatId);
   form.set("text", text);
   if (config.telegramThreadId) form.set("message_thread_id", config.telegramThreadId);
-  const response = await fetch(`https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`, { method: "POST", body: form });
+  const response = await fetchWithControllerTimeout(`https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`, { method: "POST", body: form }, config.fetchTimeoutMs);
   if (!response.ok) throw new Error(`Telegram alert failed: ${response.status}`);
   return await response.json();
 }
@@ -456,6 +468,9 @@ async function runControllerOnce(config) {
   const state = await readJsonFile(config.stateFile, { version: 1, dispatched: {}, scans: [] });
   const warnings = [];
   const now = new Date();
+  state.lastStatus = "scanning";
+  state.lastScanStartedAt = nowIso();
+  await writeJsonFile(config.stateFile, state);
   const matchCandidates = configuredFixtures()
     .map((fixture) => matchCandidateFromFixture(fixture, state, now))
     .filter(Boolean);
