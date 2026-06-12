@@ -109,6 +109,7 @@ env:
   GEMINI_LITE_TEXT_MODEL: ${{ vars.GEMINI_LITE_TEXT_MODEL || 'gemini-3.1-flash-lite' }}
   GEMINI_RETRY_DELAYS: ${{ vars.GEMINI_RETRY_DELAYS || '5000,10000,15000' }}
   WORLD_CUP_TOPICS: ${{ vars.WORLD_CUP_TOPICS }}
+  GITHUB_EVENT_NAME: ${{ github.event_name }}
   INPUT_MODE: ${{ github.event.inputs.mode || (github.event_name == 'workflow_dispatch' && 'auto' || 'auto') }}
   INPUT_STRATEGY: ${{ github.event.inputs.strategy || vars.WORLD_CUP_STRATEGY || 'viral2' }}
   INPUT_DATE: ${{ github.event.inputs.date || '' }}

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFile } from "node:fs/promises";
 import { buildMajorWorldCupAssetPacks, buildWorldCupAssetPack, generateWorldCupRun, rebuildWorldCupVisuals, renderWorldCupRun, runWorldCupScheduler, uploadWorldCupRun } from "./pipeline.mjs";
 
 function parseArgs(argv) {
@@ -74,6 +75,7 @@ function summarize(run) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const scriptTextFromFile = args.scriptFile || args.customScriptFile ? await readFile(args.scriptFile || args.customScriptFile, "utf8") : "";
   const options = {
     id: args.id,
     mode: args.mode,
@@ -92,6 +94,12 @@ async function main() {
     source: args.source,
     commentaryUrl: args.commentaryUrl,
     commentaryText: args.commentaryText,
+    customScriptText: scriptTextFromFile || args.customScriptText || args.scriptText || "",
+    customScriptTitle: args.customScriptTitle || args.scriptTitle || "",
+    customScriptStyle: args.customScriptStyle || args.scriptStyle || "",
+    customScriptDataPoint: args.customScriptDataPoint || args.dataPoint || "",
+    customScriptOpinion: args.customScriptOpinion || args.opinion || "",
+    customScriptCommentTrigger: args.customScriptCommentTrigger || args.commentTrigger || "",
     durationSeconds: args.durationSeconds,
     render: boolArg(args.render, false),
     upload: boolArg(args.upload, false),

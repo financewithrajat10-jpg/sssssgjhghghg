@@ -996,6 +996,12 @@ export function normalizeWorldCupInput(input = {}) {
     captionDesign: normalizeBool(input.captionDesign ?? input.smartCaptions, true),
     commentaryText: String(input.commentaryText || ""),
     commentaryUrl: cleanText(input.commentaryUrl || ""),
+    customScriptText: String(input.customScriptText || input.scriptText || ""),
+    customScriptTitle: cleanInputText(input.customScriptTitle || input.scriptTitle || ""),
+    customScriptStyle: cleanInputText(input.customScriptStyle || input.scriptStyle || ""),
+    customScriptDataPoint: cleanInputText(input.customScriptDataPoint || input.dataPoint || ""),
+    customScriptOpinion: cleanInputText(input.customScriptOpinion || input.opinion || ""),
+    customScriptCommentTrigger: cleanInputText(input.customScriptCommentTrigger || input.commentTrigger || ""),
     durationSeconds: Math.max(25, Math.min(65, Number(input.durationSeconds || 48) || 48)),
   };
 }

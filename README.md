@@ -216,6 +216,39 @@ GitHub Actions:
 - Optional secrets: `PEXELS_API_KEY`, `PIXABAY_API_KEY`.
 - Google Drive output is saved under `worldcup/YYYY-MM-DD/team-a-vs-team-b/` inside the configured folder when Drive is selected or used as fallback.
 
+Azure/VM trend controller:
+
+- The controller does not render video. It watches match windows/trends, then triggers the GitHub Actions video factory through `workflow_dispatch`.
+- Dry-run locally:
+
+```bash
+npm run worldcup:controller:dry -- --offline
+```
+
+- Run once on a VM:
+
+```bash
+npm run worldcup:controller -- --once
+```
+
+- Run continuously every 15 minutes:
+
+```bash
+npm run worldcup:controller
+```
+
+- Required controller env:
+  - `WORLD_CUP_GITHUB_REPO=owner/repo`
+  - `WORLD_CUP_GITHUB_TOKEN` with fine-grained Actions write access
+  - `YOUTUBE_API_KEY` for YouTube trend signals
+- Optional controller env:
+  - `WORLD_CUP_GITHUB_REF=main`
+  - `WORLD_CUP_WORKFLOW_FILE=worldcup-pipeline.yml`
+  - `WORLD_CUP_CONTROLLER_INTERVAL_MINUTES=15`
+  - `WORLD_CUP_TREND_THRESHOLD=75`
+  - `WORLD_CUP_FIXTURES_JSON=[{"date":"2026-06-12","teamA":"USA","teamB":"Paraguay","kickoff":"2026-06-13T02:00:00Z","topic":"USA vs Paraguay World Cup prediction"}]`
+- Prediction videos trigger when a fixture enters the 12-hour-before-kickoff window. Postmatch videos trigger after expected full-time plus a safety delay.
+
 ## Voice demos and MP3
 
 - `Generate demos` creates a short preview for every Gemini voice in the app.

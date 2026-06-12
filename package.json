@@ -7,7 +7,9 @@
     "start": "node server.mjs",
     "dev": "node server.mjs",
     "worldcup": "node worldcup/cli.mjs",
-    "worldcup:dry": "node worldcup/cli.mjs --mode pre-tournament --topic \"World Cup chaos desk dry run\" --offline true --render false --upload false"
+    "worldcup:dry": "node worldcup/cli.mjs --mode pre-tournament --topic \"World Cup chaos desk dry run\" --offline true --render false --upload false",
+    "worldcup:controller": "node worldcup/azure-controller.mjs",
+    "worldcup:controller:dry": "node worldcup/azure-controller.mjs --once --dry-run --offline"
   },
   "engines": {
     "node": ">=18"

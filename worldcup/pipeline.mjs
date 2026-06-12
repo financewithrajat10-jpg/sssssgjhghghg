@@ -42,6 +42,7 @@ import {
   VISUAL_SCOUT_PAGES,
   VISUAL_SCOUT_TIMEOUT_MS,
   assetPackRoot,
+  cleanText,
   createApiUsageLedger,
   getActiveGeminiKey,
   getActiveStockKey,
@@ -169,6 +170,39 @@ async function worldCupConfigSummary() {
 
 export { worldCupConfigSummary };
 
+function buildCustomSelectedScript(options, evidence, warnings = []) {
+  const text = cleanText(options.customScriptText || "");
+  if (!text) {
+    return null;
+  }
+  const firstSentence = text.split(/(?<=[.!?])\s+/).find(Boolean) || text.slice(0, 120);
+  const title =
+    cleanText(options.customScriptTitle) ||
+    cleanText(evidence?.topic) ||
+    cleanText(firstSentence).slice(0, 72) ||
+    "World Cup Chaos Desk";
+  const commentTrigger =
+    cleanText(options.customScriptCommentTrigger) ||
+    text
+      .split(/(?<=[.!?])\s+/)
+      .reverse()
+      .find((line) => /\?|comments?|comment|you think|agree|wrong/i.test(line)) ||
+    "Tell me in the comments: is this smart football logic, or am I overthinking it?";
+  warnings.push("Custom script mode used: writer and judge generation were skipped, then TTS/SRT/visual/render ran from this script.");
+  return {
+    styleId: cleanText(options.customScriptStyle) || "custom_script",
+    title,
+    text,
+    hook: cleanText(firstSentence),
+    dataPoint: cleanText(options.customScriptDataPoint),
+    opinion: cleanText(options.customScriptOpinion),
+    joke: "",
+    memorableLine: "",
+    commentTrigger: cleanText(commentTrigger),
+    source: "custom-script-input",
+  };
+}
+
 async function generateWorldCupRun(input = {}) {
   const options = normalizeWorldCupInput(input);
   const keyInfo = await getActiveGeminiKey();
@@ -205,13 +239,21 @@ async function generateWorldCupRun(input = {}) {
   run.status = "evidence_ready";
   await saveRun(run);
 
-  const scriptResult = await generateScripts(run.evidence, keyInfo, options, run.warnings);
-  run.scripts = scriptResult.scripts;
-  const judgeResult = await judgeScripts({ scripts: run.scripts, evidence: run.evidence, keyInfo, options, warnings: run.warnings });
-  let polishedSelectedScript = polishScriptForShorts(judgeResult.selected, run.warnings);
+  const customSelectedScript = buildCustomSelectedScript(options, run.evidence, run.warnings);
+  let judgeResult = null;
+  let polishedSelectedScript = null;
+  if (customSelectedScript) {
+    run.scripts = [customSelectedScript];
+    polishedSelectedScript = customSelectedScript;
+  } else {
+    const scriptResult = await generateScripts(run.evidence, keyInfo, options, run.warnings);
+    run.scripts = scriptResult.scripts;
+    judgeResult = await judgeScripts({ scripts: run.scripts, evidence: run.evidence, keyInfo, options, warnings: run.warnings });
+    polishedSelectedScript = polishScriptForShorts(judgeResult.selected, run.warnings);
+  }
   if (isViral2(options)) {
     let viralQuality = scoreViral2Script(polishedSelectedScript, run.evidence, run.viralStrategy);
-    if (viralQuality.decision !== "publish_candidate" && keyInfo?.apiKey && !options.offline) {
+    if (!customSelectedScript && viralQuality.decision !== "publish_candidate" && keyInfo?.apiKey && !options.offline) {
       const revised = await reviseViral2Script({
         script: polishedSelectedScript,
         evidence: run.evidence,
@@ -229,13 +271,15 @@ async function generateWorldCupRun(input = {}) {
         }
       }
     }
-    const hardened = hardenViralOpening(polishedSelectedScript, run.evidence, run.viralStrategy, run.warnings);
-    polishedSelectedScript = hardened.script;
-    viralQuality = hardened.quality;
-    const promiseRepaired = repairScriptPromiseContract(polishedSelectedScript, run.evidence, run.viralStrategy, run.warnings);
-    if (promiseRepaired.changed) {
-      polishedSelectedScript = promiseRepaired.script;
-      viralQuality = scoreViral2Script(polishedSelectedScript, run.evidence, run.viralStrategy);
+    if (!customSelectedScript) {
+      const hardened = hardenViralOpening(polishedSelectedScript, run.evidence, run.viralStrategy, run.warnings);
+      polishedSelectedScript = hardened.script;
+      viralQuality = hardened.quality;
+      const promiseRepaired = repairScriptPromiseContract(polishedSelectedScript, run.evidence, run.viralStrategy, run.warnings);
+      if (promiseRepaired.changed) {
+        polishedSelectedScript = promiseRepaired.script;
+        viralQuality = scoreViral2Script(polishedSelectedScript, run.evidence, run.viralStrategy);
+      }
     }
     polishedSelectedScript.viralQuality = viralQuality;
     run.viralStrategy.scriptGate = {
@@ -245,18 +289,33 @@ async function generateWorldCupRun(input = {}) {
   }
   run.selectedScript = {
     ...polishedSelectedScript,
-    judge: {
-      model: judgeResult.model,
-      candidates: judgeResult.candidates.map((candidate) => ({
-        styleId: candidate.styleId,
-        title: candidate.title,
-        totalScore: candidate.totalScore || totalJudgeScore(candidate.scores),
-        scores: candidate.scores,
-        notes: candidate.judgeNotes || [],
-      })),
-      revisionUsed: judgeResult.revisionUsed,
-      notes: judgeResult.notes,
-    },
+    judge: judgeResult
+      ? {
+          model: judgeResult.model,
+          candidates: judgeResult.candidates.map((candidate) => ({
+            styleId: candidate.styleId,
+            title: candidate.title,
+            totalScore: candidate.totalScore || totalJudgeScore(candidate.scores),
+            scores: candidate.scores,
+            notes: candidate.judgeNotes || [],
+          })),
+          revisionUsed: judgeResult.revisionUsed,
+          notes: judgeResult.notes,
+        }
+      : {
+          model: "custom-script-input",
+          candidates: [
+            {
+              styleId: polishedSelectedScript.styleId,
+              title: polishedSelectedScript.title,
+              totalScore: polishedSelectedScript.viralQuality?.total || 0,
+              scores: {},
+              notes: ["Custom script supplied by operator; automatic script generation and judging skipped."],
+            },
+          ],
+          revisionUsed: false,
+          notes: ["Custom script supplied by operator."],
+        },
   };
   run.files.script = await writeRunFile(
     run,
