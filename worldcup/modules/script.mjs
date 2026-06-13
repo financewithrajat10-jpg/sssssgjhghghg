@@ -189,7 +189,7 @@ export function stripHtml(html) {
     .trim();
 }
 
-export function localCommentaryExtractor(text, sourceUrl = "") {
+function localCommentaryExtractorBasic(text, sourceUrl = "") {
   const lines = String(text || "")
     .replace(/\r/g, "\n")
     .split(/\n|(?=\b\d{1,3}(?:\+\d+)?['’])/)
@@ -212,6 +212,83 @@ export function localCommentaryExtractor(text, sourceUrl = "") {
     }
   }
   return events.slice(0, 18);
+}
+
+export function localCommentaryExtractor(text, sourceUrl = "") {
+  const normalized = repairCommonMojibake(decodeBasicHtmlEntities(String(text || "")))
+    .replace(/\r/g, "\n")
+    .replace(/\b(\d{1,3})\s*min(?:ute|s)?\s*\+\s*(\d+)\b/gi, "$1+$2' ")
+    .replace(/\b(\d{1,3})\s*min(?:ute|s)?\b/gi, "$1' ");
+  const lines = normalized
+    .split(/\n|(?=\b\d{1,3}(?:\+\d+)?['â€™])|(?=\bGOAL!\s)|(?=\bFULL TIME\b)|(?=\bFinal:?\s)|(?=\bHalf-time:?\s)/i)
+    .map(cleanText)
+    .filter(Boolean);
+  const events = [];
+  for (const line of lines) {
+    const minuteMatch = line.match(/\b(\d{1,3})(?:\+(\d+))?['â€™]?\s*[-:.)]?\s*(.{12,240})/);
+    if (minuteMatch) {
+      const minute = minuteMatch[2] ? `${minuteMatch[1]}+${minuteMatch[2]}` : minuteMatch[1];
+      events.push({
+        minute,
+        event: cleanText(minuteMatch[3]).slice(0, 200),
+        player: "",
+        team: "",
+        impact: "possible match event extracted from commentary text",
+        sourceUrl,
+        confidence: /\b(goal|half|full time|substitution|red card|penalty|injur|knock|save|assist)\b/i.test(minuteMatch[3]) ? 0.72 : 0.48,
+      });
+      continue;
+    }
+    const goalMatch = line.match(/\bGOAL!\s*(.{10,220})/i);
+    if (goalMatch) {
+      const playerMatch = goalMatch[1].match(/\(([^)0-9]+?)\s+\d{1,3}/) || goalMatch[1].match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b/);
+      events.push({
+        minute: "",
+        event: `Goal: ${cleanText(goalMatch[1]).slice(0, 190)}`,
+        player: cleanText(playerMatch?.[1] || ""),
+        team: "",
+        impact: "goal changed the match state",
+        sourceUrl,
+        confidence: 0.82,
+      });
+      continue;
+    }
+    const finalMatch = line.match(/\b(?:FULL TIME|Final)[:!\s-]+(.{5,180})/i);
+    if (finalMatch) {
+      events.push({
+        minute: "FT",
+        event: `Full time: ${cleanText(finalMatch[1]).slice(0, 170)}`,
+        player: "",
+        team: "",
+        impact: "final result and post-match framing",
+        sourceUrl,
+        confidence: 0.86,
+      });
+      continue;
+    }
+    const halfMatch = line.match(/\bHalf-time:?\s+(.{5,180})/i);
+    if (halfMatch) {
+      events.push({
+        minute: "HT",
+        event: `Half time: ${cleanText(halfMatch[1]).slice(0, 170)}`,
+        player: "",
+        team: "",
+        impact: "half-time match state",
+        sourceUrl,
+        confidence: 0.76,
+      });
+    }
+  }
+  const basic = localCommentaryExtractorBasic(normalized, sourceUrl);
+  const seen = new Set();
+  return [...events, ...basic]
+    .filter((event) => {
+      const key = `${event.minute}:${event.event}`.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 24);
 }
 
 export async function extractCommentaryEvents({ keyInfo, text, url, offline, warnings }) {
@@ -615,7 +692,15 @@ export function normalizeEvidencePack({ options, commentaryEvents, rawEvidence =
   const fallback = fallbackEvidence(options, commentaryEvents);
   const sourceUrls = new Set(sources.map((source) => cleanText(source.uri || source.sourceUrl)).filter(Boolean));
   const sourceCount = sourceUrls.size;
-  const sourcedClaims = (Array.isArray(rawEvidence.sourcedClaims) ? rawEvidence.sourcedClaims : [])
+  const eventClaims = (Array.isArray(commentaryEvents) ? commentaryEvents : [])
+    .filter((event) => cleanText(event.event) && cleanText(event.sourceUrl) && Number(event.confidence || 0) >= 0.7)
+    .filter((event) => /\b(goal|full time|half time|substitution|injur|knock|red card|penalty|assist|score|wins?|defeat|beats?)\b/i.test(event.event))
+    .map((event) => ({
+      claim: `${event.minute ? `${event.minute}: ` : ""}${cleanText(event.event)}`,
+      sourceUrl: cleanText(event.sourceUrl),
+      confidence: Math.max(0.6, Math.min(0.9, Number(event.confidence || 0.72))),
+    }));
+  const sourcedClaims = [...(Array.isArray(rawEvidence.sourcedClaims) ? rawEvidence.sourcedClaims : []), ...eventClaims]
     .map((claim) => ({
       claim: cleanText(claim.claim),
       sourceUrl: cleanText(claim.sourceUrl),
@@ -687,7 +772,16 @@ Do not invent numbers. If a stat is found, include the source URL/title.
 ${usaLens}
 ${memoryPrompt(memory)}
 `.trim();
-  return [
+  const passes = [
+    ...(options.type === "postmatch" && options.match.teamA && options.match.teamB
+      ? [
+          {
+            id: "line_by_line_commentary",
+            query: `${options.match.teamA} ${options.match.teamB} World Cup 2026 live text commentary minute by minute goals final score Guardian ESPN BBC AP`,
+            prompt: `${baseRules}\nFind line-by-line/live-blog match data for ${matchDescription}: full-time score, goals, scorers, substitutions, injuries, cards, and turning points.`,
+          },
+        ]
+      : []),
     {
       id: "current_context",
       query: `${matchDescription} latest context World Cup 2026 form squad pressure`,
@@ -713,7 +807,8 @@ ${memoryPrompt(memory)}
       query: `${matchDescription} contrarian prediction upset risk pressure tactical weakness`,
       prompt: `${baseRules}\nSearch for a contrarian but defensible football argument for: ${matchDescription}.`,
     },
-  ].slice(0, WORLD_CUP_RESEARCH_PASSES);
+  ];
+  return passes.slice(0, WORLD_CUP_RESEARCH_PASSES);
 }
 
 export function decodeBasicHtmlEntities(text = "") {
@@ -808,6 +903,20 @@ export async function fetchDuckDuckGoItems(query, warnings = []) {
   }
 }
 
+export function commentarySourceQueries(pass) {
+  if (pass.id !== "line_by_line_commentary") return [];
+  const query = cleanText(pass.query);
+  return [
+    `site:theguardian.com/football/live ${query}`,
+    `site:espn.com/soccer/commentary ${query}`,
+    `site:bbc.com/sport/football/live ${query}`,
+    `site:apnews.com/live ${query}`,
+    `site:cbssports.com/soccer ${query}`,
+    `site:foxsports.com/soccer ${query}`,
+    `site:ussoccer.com ${query}`,
+  ];
+}
+
 export function sourceHost(source = {}) {
   try {
     return new URL(source.uri || source.sourceUrl || "").hostname.replace(/^www\./i, "");
@@ -853,6 +962,9 @@ export async function scrapeResearchPass(pass, warnings = []) {
     ...(await fetchGoogleNewsRssItems(pass.query, warnings)),
     ...(await fetchDuckDuckGoItems(pass.query, warnings)),
   ];
+  for (const query of commentarySourceQueries(pass)) {
+    searchItems.push(...(await fetchDuckDuckGoItems(query, warnings)));
+  }
   const uniqueSources = [];
   const seen = new Set();
   for (const item of searchItems) {
@@ -908,6 +1020,41 @@ export async function collectScrapedResearchNotes({ options, memory, warnings })
     }
   }
   return { researchNotes, sources: [...sourceMap.values()].slice(0, 24) };
+}
+
+export function extractCommentaryEventsFromResearchNotes(researchNotes = []) {
+  const events = [];
+  for (const note of researchNotes) {
+    const chunks = String(note.text || "")
+      .split(/(?=Source\s+\d+:\s+)/g)
+      .map((chunk) => chunk.trim())
+      .filter(Boolean);
+    for (const chunk of chunks) {
+      const url = cleanText(chunk.match(/\bURL:\s*(https?:\/\/\S+)/i)?.[1] || "");
+      const extracted = localCommentaryExtractor(chunk, url);
+      for (const event of extracted) {
+        const eventText = cleanText(event.event);
+        if (!eventText) continue;
+        if (!/\b(goal|full time|half time|substitution|injur|knock|red card|penalty|assist|save|score|wins?|defeat|beats?|equaliz|lead)\b/i.test(eventText)) {
+          continue;
+        }
+        events.push({
+          ...event,
+          sourceUrl: cleanText(event.sourceUrl || url),
+          confidence: Math.max(Number(event.confidence || 0), note.id === "line_by_line_commentary" ? 0.78 : 0.62),
+        });
+      }
+    }
+  }
+  const seen = new Set();
+  return events
+    .filter((event) => {
+      const key = `${event.minute}:${event.event}:${event.sourceUrl}`.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 28);
 }
 
 export async function consolidateWorldCupEvidence({ options, keyInfo, commentaryEvents, researchNotes, sources, memory, warnings }) {
@@ -983,7 +1130,7 @@ Return JSON:
 }
 
 export async function collectWorldCupData(options, keyInfo, warnings) {
-  const commentaryEvents = await extractCommentaryEvents({
+  let commentaryEvents = await extractCommentaryEvents({
     keyInfo,
     text: options.commentaryText,
     url: options.commentaryUrl,
@@ -1011,6 +1158,11 @@ export async function collectWorldCupData(options, keyInfo, warnings) {
         commentaryEvents,
         memory,
       };
+    }
+    const scrapedEvents = extractCommentaryEventsFromResearchNotes(researchNotes);
+    if (scrapedEvents.length) {
+      commentaryEvents = [...commentaryEvents, ...scrapedEvents].slice(0, 32);
+      warnings.push(`Scrape commentary extractor found ${scrapedEvents.length} candidate match events.`);
     }
     const evidence = await consolidateWorldCupEvidence({ options, keyInfo, commentaryEvents, researchNotes, sources, memory, warnings });
     evidence.researchModel = `web-scrape -> ${WRITER_MODEL}`;
