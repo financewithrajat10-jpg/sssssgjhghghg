@@ -94,6 +94,13 @@ export const WORLD_CUP_BGM_PRESET = normalizeWorldCupBgmPreset(process.env.WORLD
 export const WORLD_CUP_BGM_FILE = process.env.WORLD_CUP_BGM_FILE || "";
 export const WORLD_CUP_BGM_VOLUME = Math.min(0.35, Math.max(0.02, Number(process.env.WORLD_CUP_BGM_VOLUME || 0.18) || 0.18));
 export const WORLD_CUP_CAPTION_PRESET = normalizeWorldCupCaptionPreset(process.env.WORLD_CUP_CAPTION_PRESET || "creator-yellow-pop");
+export const WORLD_CUP_QUALITY_MODE = normalizeWorldCupQualityMode(process.env.WORLD_CUP_QUALITY_MODE || "");
+export const WORLD_CUP_V2_SCRIPT_PUBLISH_SCORE = Math.max(70, Math.min(98, Number(process.env.WORLD_CUP_V2_SCRIPT_PUBLISH_SCORE || 85) || 85));
+export const WORLD_CUP_V2_FINAL_PUBLISH_SCORE = Math.max(70, Math.min(99, Number(process.env.WORLD_CUP_V2_FINAL_PUBLISH_SCORE || 88) || 88));
+export const WORLD_CUP_V2_MAX_SCRIPT_RETRIES = Math.max(0, Math.min(4, Number(process.env.WORLD_CUP_V2_MAX_SCRIPT_RETRIES || 2) || 2));
+export const WORLD_CUP_V2_MAX_VISUAL_RETRIES = Math.max(0, Math.min(5, Number(process.env.WORLD_CUP_V2_MAX_VISUAL_RETRIES || 3) || 3));
+export const WORLD_CUP_V2_REQUIRE_ZERO_FALLBACKS = normalizeBool(process.env.WORLD_CUP_V2_REQUIRE_ZERO_FALLBACKS, true);
+export const WORLD_CUP_V2_TELEGRAM_SEND_FAILED_MP4 = normalizeBool(process.env.WORLD_CUP_V2_TELEGRAM_SEND_FAILED_MP4, true);
 export const GEMINI_RETRY_DELAYS_MS = String(process.env.WORLD_CUP_GEMINI_RETRY_DELAYS || "5000,10000,15000")
   .split(",")
   .map((delay) => Number(delay.trim()))
@@ -335,6 +342,17 @@ export function normalizeWorldCupBgmPreset(value) {
     return preset;
   }
   return "auto";
+}
+
+export function normalizeWorldCupQualityMode(value) {
+  const mode = cleanText(value || "").toLowerCase();
+  if (["v2", "quality-v2", "strict", "publish-ready"].includes(mode)) {
+    return "v2";
+  }
+  if (["off", "classic", "v1", "none", "debug"].includes(mode)) {
+    return "off";
+  }
+  return "";
 }
 
 export function isViral2(optionsOrRun = {}) {
@@ -973,6 +991,7 @@ ${screenplay}
 export function normalizeWorldCupInput(input = {}) {
   const type = String(input.type || input.mode || "pre-tournament").trim().toLowerCase();
   const strategy = normalizeWorldCupStrategy(input.strategy || input.contentStrategy || DEFAULT_WORLD_CUP_STRATEGY);
+  const qualityMode = normalizeWorldCupQualityMode(input.qualityMode || input.quality_mode || WORLD_CUP_QUALITY_MODE);
   const teamA = cleanInputText(input.teamA || input.team_a || input.match?.teamA || input.match?.homeTeam || "");
   const teamB = cleanInputText(input.teamB || input.team_b || input.match?.teamB || input.match?.awayTeam || "");
   const date = (cleanInputText(input.date || input.match?.date || "") || todayDate()).slice(0, 10);
@@ -989,6 +1008,14 @@ export function normalizeWorldCupInput(input = {}) {
     type: runType,
     mode: runType,
     strategy,
+    qualityMode,
+    strictPublish: normalizeBool(input.strictPublish ?? input.strict_publish, qualityMode === "v2"),
+    scriptPublishScore: Math.max(70, Math.min(98, Number(input.scriptPublishScore || input.v2ScriptPublishScore || WORLD_CUP_V2_SCRIPT_PUBLISH_SCORE) || WORLD_CUP_V2_SCRIPT_PUBLISH_SCORE)),
+    finalPublishScore: Math.max(70, Math.min(99, Number(input.finalPublishScore || input.v2FinalPublishScore || WORLD_CUP_V2_FINAL_PUBLISH_SCORE) || WORLD_CUP_V2_FINAL_PUBLISH_SCORE)),
+    maxScriptRetries: Math.max(0, Math.min(4, Number(input.maxScriptRetries || WORLD_CUP_V2_MAX_SCRIPT_RETRIES) || WORLD_CUP_V2_MAX_SCRIPT_RETRIES)),
+    maxVisualRetries: Math.max(0, Math.min(5, Number(input.maxVisualRetries || WORLD_CUP_V2_MAX_VISUAL_RETRIES) || WORLD_CUP_V2_MAX_VISUAL_RETRIES)),
+    requireZeroFallbacks: normalizeBool(input.requireZeroFallbacks ?? input.v2RequireZeroFallbacks, WORLD_CUP_V2_REQUIRE_ZERO_FALLBACKS),
+    telegramSendFailedMp4: normalizeBool(input.telegramSendFailedMp4 ?? input.v2TelegramSendFailedMp4, WORLD_CUP_V2_TELEGRAM_SEND_FAILED_MP4),
     topic,
     match: {
       id: matchId || hashText(`${date}:${teamA}:${teamB}:${topic}`),

@@ -54,6 +54,7 @@ import {
   WORLD_CUP_MIN_REAL_VISUAL_RATIO,
   WORLD_CUP_RESEARCH_PASSES,
   WORLD_CUP_TELEGRAM_SEND_SIDECARS,
+  WORLD_CUP_V2_TELEGRAM_SEND_FAILED_MP4,
   WORLD_CUP_VISUAL_RETRY_ATTEMPTS,
   WORLD_CUP_VOICES,
   WORLD_CUP_VOICE_VOLUME,
@@ -611,11 +612,15 @@ export function telegramMessageSummary(result, type, label) {
 export function worldCupTelegramCaption(run, suffix = "") {
   const topic = cleanText(run.topic || run.selectedScript?.title || run.match?.title || "World Cup short");
   const teams = [run.match?.teamA, run.match?.teamB].filter(Boolean).join(" vs ");
-  const score = Number(run.selectedScript?.viralQuality?.total || run.viralStrategy?.topicScore?.total || run.postRenderQuality?.score || 0);
+  const score = Number(run.qualityV2?.finalScore || run.postRenderQuality?.score || run.selectedScript?.viralQuality?.total || run.viralStrategy?.topicScore?.total || 0);
+  const qualityDecision = cleanText(run.qualityV2?.finalDecision || run.postRenderQuality?.decision || "");
+  const qualityIssues = Array.isArray(run.qualityV2?.issues) ? run.qualityV2.issues.map(cleanText).filter(Boolean).slice(0, 2) : [];
   const lines = [
     "World Cup Chaos Desk",
     teams || topic,
     `Type: ${run.type || "short"} | Strategy: ${run.strategy || "classic"}${score ? ` | Score: ${score.toFixed(0)}/100` : ""}`,
+    qualityDecision ? `V2 QC: ${qualityDecision}${qualityDecision !== "publish_candidate" ? " | REVIEW COPY" : ""}` : "",
+    qualityIssues.length ? `Issues: ${qualityIssues.join(" | ")}` : "",
     run.tts?.voice ? `Voice: ${run.tts.voice}` : "",
     suffix,
   ].filter(Boolean);
@@ -666,11 +671,40 @@ export async function telegramRequest(method, fields = {}, file = null) {
   return data.result || data;
 }
 
+export async function sendWorldCupTelegramAlert(runOrId, text, label = "quality-alert") {
+  const run = typeof runOrId === "string" ? await readWorldCupRun(runOrId) : runOrId;
+  const message = String(text || "").trim().slice(0, 3900);
+  const result = await telegramRequest("sendMessage", { text: message || `World Cup alert for ${run.id}` });
+  run.telegram = run.telegram || { uploadedAt: "", messages: [] };
+  run.telegram.uploadedAt = nowIso();
+  run.telegram.chatId = telegramConfig().chatId;
+  run.telegram.threadId = telegramConfig().threadId;
+  run.telegram.messages = [...(run.telegram.messages || []), telegramMessageSummary(result, "message", label)];
+  run.files = run.files || {};
+  run.files.telegram = await writeRunFile(run, "telegram.json", `${JSON.stringify(run.telegram, null, 2)}\n`, "utf8");
+  return await saveRun(run);
+}
+
 export async function uploadWorldCupRunToTelegram(id, options = {}) {
   const run = await readWorldCupRun(id);
   const runDir = path.join(runsRoot, run.id);
   const sentSidecars = normalizeBool(options.sendSidecars ?? WORLD_CUP_TELEGRAM_SEND_SIDECARS, WORLD_CUP_TELEGRAM_SEND_SIDECARS);
   const requireMp4 = normalizeBool(options.requireMp4 ?? options.requireVideo, false);
+  const allowV2FailedMp4 =
+    normalizeBool(options.allowNeedsReviewUpload ?? options.allowReviewUpload, false) ||
+    normalizeBool(options.telegramSendFailedMp4 ?? options.v2TelegramSendFailedMp4, WORLD_CUP_V2_TELEGRAM_SEND_FAILED_MP4);
+  if ((run.qualityMode === "v2" || run.qualityV2?.mode === "v2") && run.qualityV2?.finalDecision !== "publish_candidate" && run.files?.mp4 && !allowV2FailedMp4) {
+    throw new WorldCupError("Telegram MP4 upload blocked because V2 quality did not approve this run.", {
+      status: 422,
+      code: "WORLD_CUP_V2_UPLOAD_BLOCKED",
+      details: {
+        runId: run.id,
+        status: run.status,
+        finalDecision: run.qualityV2?.finalDecision || "",
+        issues: run.qualityV2?.issues || [],
+      },
+    });
+  }
   if (requireMp4) {
     await assertWorldCupMp4Ready(run);
   }
@@ -704,6 +738,9 @@ export async function uploadWorldCupRunToTelegram(id, options = {}) {
     ["srt", "srt.srt", run.files.srt, "application/x-subrip; charset=utf-8"],
     ["script", "script.json", run.files.script, "application/json; charset=utf-8"],
     ["quality", "quality.json", run.files.quality, "application/json; charset=utf-8"],
+    ["quality-v2", "quality-v2.json", run.files.qualityV2, "application/json; charset=utf-8"],
+    ["storyboard", "storyboard.json", run.files.storyboard, "application/json; charset=utf-8"],
+    ["retry-log", "retry-log.json", run.files.retryLog, "application/json; charset=utf-8"],
     ["evidence", "evidence.json", run.files.evidence, "application/json; charset=utf-8"],
   ];
   if (sentSidecars) {
@@ -781,6 +818,9 @@ export async function uploadWorldCupRunToR2(id) {
     ["attribution.json", run.files.attribution, "application/json; charset=utf-8"],
     ["rights.json", run.files.rights, "application/json; charset=utf-8"],
     ["quality.json", run.files.quality, "application/json; charset=utf-8"],
+    ["quality-v2.json", run.files.qualityV2, "application/json; charset=utf-8"],
+    ["storyboard.json", run.files.storyboard, "application/json; charset=utf-8"],
+    ["retry-log.json", run.files.retryLog, "application/json; charset=utf-8"],
     ["render-log.json", run.files.renderLog, "application/json; charset=utf-8"],
     ["api-usage.json", run.files.apiUsage, "application/json; charset=utf-8"],
   ];
@@ -861,6 +901,9 @@ export async function uploadWorldCupRunToDrive(id) {
     ["attribution.json", run.files.attribution, "application/json; charset=utf-8"],
     ["rights.json", run.files.rights, "application/json; charset=utf-8"],
     ["quality.json", run.files.quality, "application/json; charset=utf-8"],
+    ["quality-v2.json", run.files.qualityV2, "application/json; charset=utf-8"],
+    ["storyboard.json", run.files.storyboard, "application/json; charset=utf-8"],
+    ["retry-log.json", run.files.retryLog, "application/json; charset=utf-8"],
     ["render-log.json", run.files.renderLog, "application/json; charset=utf-8"],
     ["api-usage.json", run.files.apiUsage, "application/json; charset=utf-8"],
   ];

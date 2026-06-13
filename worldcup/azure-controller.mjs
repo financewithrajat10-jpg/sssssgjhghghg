@@ -115,7 +115,13 @@ function candidateKey(candidate) {
 
 function wasDispatched(state, candidate) {
   const key = candidateKey(candidate);
-  return Boolean(state.dispatched?.[key]);
+  const entry = state.dispatched?.[key];
+  if (!entry) return false;
+  const conclusion = cleanText(entry.workflowRun?.conclusion || "").toLowerCase();
+  if (["failure", "cancelled", "timed_out", "action_required"].includes(conclusion) || entry.error) {
+    return false;
+  }
+  return true;
 }
 
 function markDispatched(state, candidate, details = {}) {
@@ -534,6 +540,11 @@ function workflowInputs(candidate) {
     upload: "true",
     upload_target: "telegram",
     allow_needs_review_upload: "false",
+    quality_mode: "v2",
+    max_script_retries: "2",
+    max_visual_retries: "3",
+    strict_publish: "true",
+    telegram_send_failed_mp4: "true",
     force: "true",
   };
 }

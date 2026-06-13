@@ -144,6 +144,16 @@ Viral 2.0 comparison mode:
 - Saves `viral-strategy.json` and, after rendering, `quality.json`.
 - Viral 2.0 renders use a louder Shorts voice chain plus post-render QC for audio level, caption gaps, visual repetition, and first-hook strength.
 
+Publish-ready V2 quality mode:
+
+- Enable with `--quality-mode v2` or `WORLD_CUP_QUALITY_MODE=v2`. GitHub/Azure production runs default to V2.
+- V2 is a quality-control layer inside the existing World Cup factory, not a separate pipeline.
+- It blocks before TTS when the selected script fails the publish gate, then retries the script up to `WORLD_CUP_V2_MAX_SCRIPT_RETRIES`.
+- It blocks before render when storyboard, visual, caption, or pre-render audio gates fail. Visual retries keep the same script, TTS, audio, and SRT.
+- It blocks pre-render failures when no acceptable MP4 can be made. If a video renders but final QC is below the publish score, Telegram receives it as a review copy with the V2 score and top issues in the caption.
+- Blocked no-render runs still save `quality-v2.json`, `storyboard.json`, `retry-log.json`, `api-usage.json`, and a Telegram text alert explaining the failed gate.
+- Use `--allow-needs-review-upload true` only for private debug uploads of a rejected MP4.
+
 Default World Cup models:
 
 - Text-heavy work now defaults to `gemini-3.1-flash-lite`: search/evidence, script writing, script evaluation, TTS rewrite, and audio-aware SRT.
@@ -207,6 +217,14 @@ GitHub Actions:
   - `WORLD_CUP_DRIVE_FALLBACK_TELEGRAM=true`
 - Optional upload target variable: `WORLD_CUP_UPLOAD_TARGET=auto`, `telegram`, `google-drive`, or `r2`.
 - Optional variable: `WORLD_CUP_STRATEGY=classic` or `viral2`. Keep `classic` when you want the baseline; switch to `viral2` for the stricter viral-content gates.
+- Optional V2 quality variables:
+  - `WORLD_CUP_QUALITY_MODE=v2`
+  - `WORLD_CUP_V2_SCRIPT_PUBLISH_SCORE=85`
+  - `WORLD_CUP_V2_FINAL_PUBLISH_SCORE=88`
+  - `WORLD_CUP_V2_MAX_SCRIPT_RETRIES=2`
+  - `WORLD_CUP_V2_MAX_VISUAL_RETRIES=3`
+  - `WORLD_CUP_V2_REQUIRE_ZERO_FALLBACKS=true`
+  - `WORLD_CUP_V2_TELEGRAM_SEND_FAILED_MP4=true`
 - Optional R2 fallback secrets:
   - `CLOUDFLARE_ACCOUNT_ID`
   - `CLOUDFLARE_R2_ACCESS_KEY_ID`

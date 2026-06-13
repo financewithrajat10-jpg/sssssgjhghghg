@@ -63,6 +63,8 @@ function summarize(run) {
     viralScore: run.selectedScript?.viralQuality?.total || run.viralStrategy?.topicScore?.total || 0,
     viralTopicScore: run.viralStrategy?.topicScore?.total || 0,
     viralDecision: combinedViralDecision(run),
+    qualityMode: run.qualityMode || run.qualityV2?.mode || "",
+    qualityV2: run.qualityV2,
     voice: run.tts?.voice,
     durationSeconds: run.audio?.durationSeconds || run.srt?.durationSeconds,
     files: run.files,
@@ -71,6 +73,20 @@ function summarize(run) {
     telegram: run.telegram,
     warnings: run.warnings,
   };
+}
+
+function renderAlreadyHandled(run) {
+  return Boolean(
+    run.files?.mp4 ||
+      ["rendered", "publish_candidate", "sent_telegram", "sidecars_sent_telegram", "uploaded", "pre_render_blocked", "rendered_needs_review"].includes(run.status),
+  );
+}
+
+function uploadAlreadyHandled(run) {
+  return Boolean(
+    ["sent_telegram", "sidecars_sent_telegram", "uploaded", "pre_render_blocked", "rendered_needs_review"].includes(run.status) ||
+      (run.telegram?.messages || []).some((message) => message.label === "mp4"),
+  );
 }
 
 async function main() {
@@ -112,6 +128,14 @@ async function main() {
     captionPreset: args.captionPreset || args.captionStyle,
     captionMidScreen: args.captionMidScreen || args.midScreenCaptions,
     captionDesign: boolArg(args.captionDesign ?? args.smartCaptions, true),
+    qualityMode: args.qualityMode,
+    strictPublish: boolArg(args.strictPublish, undefined),
+    maxScriptRetries: args.maxScriptRetries,
+    maxVisualRetries: args.maxVisualRetries,
+    scriptPublishScore: args.scriptPublishScore || args.v2ScriptPublishScore,
+    finalPublishScore: args.finalPublishScore || args.v2FinalPublishScore,
+    requireZeroFallbacks: boolArg(args.requireZeroFallbacks ?? args.v2RequireZeroFallbacks, undefined),
+    telegramSendFailedMp4: boolArg(args.telegramSendFailedMp4 ?? args.v2TelegramSendFailedMp4, undefined),
     allowSilentRender: boolArg(args.allowSilentRender ?? args.allowSilent ?? args.silentOk, false),
     allowFallbackVisuals: boolArg(args.allowFallbackVisuals ?? args.allowFallbackVisualRender ?? args.fallbackVisualsOk, false),
     allowNeedsReviewUpload: boolArg(args.allowNeedsReviewUpload ?? args.allowReviewUpload, false),
@@ -171,10 +195,10 @@ async function main() {
   }
 
   let run = await generateWorldCupRun(options);
-  if (options.render && run.status !== "rendered" && run.status !== "uploaded") {
+  if (options.render && !renderAlreadyHandled(run)) {
     run = await renderWorldCupRun(run.id, options);
   }
-  if (options.upload && run.status !== "uploaded") {
+  if (options.upload && !uploadAlreadyHandled(run)) {
     run = await uploadWorldCupRun(run.id, options);
   }
   console.log(JSON.stringify(summarize(run), null, 2));

@@ -1508,17 +1508,23 @@ export function repairScriptPromiseContract(script = {}, evidence = {}, viralStr
   return { script: repaired, contract: repairedContract, changed: true };
 }
 
-export async function reviseViral2Script({ script, evidence, viralStrategy, keyInfo, warnings }) {
+export async function reviseViral2Script({ script, evidence, viralStrategy, keyInfo, warnings, qualityIssues = [], forbiddenPhrases = [], retryAttempt = 1 }) {
   if (!keyInfo?.apiKey) {
     return null;
   }
+  const failureText = Array.isArray(qualityIssues) && qualityIssues.length
+    ? `\nAdditional V2 publish-gate failure reasons from attempt ${retryAttempt}:\n${qualityIssues.map((issue) => `- ${cleanText(issue)}`).join("\n")}\n`
+    : "";
+  const forbiddenText = Array.isArray(forbiddenPhrases) && forbiddenPhrases.length
+    ? `\nFreshness bans for this revision:\n${forbiddenPhrases.map((phrase) => `- Do not use or lightly paraphrase: "${cleanText(phrase)}"`).join("\n")}\n`
+    : "";
   const prompt = `
 You are the brutal Shorts editor for "World Cup Chaos Desk".
-The script below failed Viral 2.0 quality gates. Rewrite it once.
+The script below failed Viral 2.0 / V2 publish quality gates. Rewrite it once.
 
 Keep:
 - Same topic and safe evidence.
-- 70-110 spoken words.
+- 75-115 spoken words.
 - One complete first-sentence contradiction.
 - First 12-16 words must pass the first-3-second gate: recognizable target + pressure/debate + curiosity gap.
 - Never open with a question. Rewrite any "Is/Are/Can/Will..." opener into a direct claim.
@@ -1529,12 +1535,14 @@ Keep:
 - If the topic, title, or cover promises a numbered list such as "3 paths", "4 reasons", or "2 scenarios", the script must explicitly deliver every item using clear labels like "Path one", "Path two", and "Path three". Do not promise three items and spend the whole script on one branch.
 - Keep the tone soft, funny, and nervous, not angry or doom-heavy.
 - Avoid: national humiliation, psychological death trap, sucker's bet, delusional, glass cannon, destined to break, crushed, failure, disaster, meltdown, collapse, choke, fold, crisis.
-- Prefer: panic button, career mode with no restart button, group chat courtroom, football court hearing, souffle during an earthquake.
+- Prefer fresh topic-specific equivalents of: panic button, group chat courtroom, football court hearing, souffle during an earthquake. Do not repeat the exact same creator line across videos.
 - The rewritten script MUST include one quotable creator line in this style:
   "Home advantage is cute until your own fans start sounding like the comment section."
   "The crowd is an extra man until it opens the group chat."
   "The panic button is already warm."
   "The group chat is about to become a courtroom."
+${failureText}
+${forbiddenText}
 
 Use this hook lab if useful:
 ${JSON.stringify(viralStrategy, null, 2)}

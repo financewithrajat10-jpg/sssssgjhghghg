@@ -2357,7 +2357,10 @@ export async function planWorldCupVisualsWithRetries({ run, keyInfo, options, in
 
   let plan = await buildVisualPlan({ evidence: run.evidence, srtSegments: run.srt.segments, keyInfo, options, warnings, visualScout, selectedScript: run.selectedScript || run.tts });
   let attempt = 0;
-  while (visualPlanNeedsRetry(plan) && attempt < WORLD_CUP_VISUAL_RETRY_ATTEMPTS && !options.offline) {
+  const retryLimit = Number.isFinite(Number(options.maxVisualRetries))
+    ? Math.max(0, Math.min(5, Number(options.maxVisualRetries)))
+    : WORLD_CUP_VISUAL_RETRY_ATTEMPTS;
+  while (visualPlanNeedsRetry(plan) && attempt < retryLimit && !options.offline) {
     attempt += 1;
     warnings.push(
       `Visual plan retry ${attempt}: fallback count ${visualPlanFallbackCount(plan)}, real coverage ${Math.round(visualPlanRealVisualRatio(plan) * 100)}%. Keeping script/TTS/SRT and rebuilding visuals only.`,

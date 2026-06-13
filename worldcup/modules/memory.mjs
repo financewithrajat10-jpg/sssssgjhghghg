@@ -191,6 +191,8 @@ export async function createRunSkeleton(options) {
     id: options.id,
     type: options.type,
     strategy: options.strategy,
+    qualityMode: options.qualityMode || "",
+    strictPublish: Boolean(options.strictPublish),
     status: "drafting",
     createdAt,
     updatedAt: createdAt,
@@ -210,6 +212,8 @@ export async function createRunSkeleton(options) {
     visualPlan: {},
     rightsManifest: {},
     review: {},
+    qualityV2: {},
+    retryLog: {},
     r2: { mp4Key: "", publicUrl: "" },
     drive: { folderId: "", folderUrl: "", uploaded: [] },
     telegram: { uploadedAt: "", messages: [] },
@@ -272,6 +276,24 @@ export function runSummary(run) {
     viralScore: run.selectedScript?.viralQuality?.total || run.viralStrategy?.topicScore?.total || 0,
     viralTopicScore: run.viralStrategy?.topicScore?.total || 0,
     viralDecision: combinedViralDecision(run),
+    qualityMode: run.qualityMode || run.qualityV2?.mode || "",
+    qualityV2: run.qualityV2
+      ? {
+          finalDecision: run.qualityV2.finalDecision || "",
+          finalScore: run.qualityV2.finalScore || 0,
+          issues: (run.qualityV2.issues || []).slice(0, 4),
+          gates: Object.fromEntries(
+            Object.entries(run.qualityV2.gates || {}).map(([key, value]) => [
+              key,
+              {
+                pass: value?.pass,
+                score: value?.score || value?.total || 0,
+                hardFails: (value?.hardFails || []).slice(0, 3),
+              },
+            ]),
+          ),
+        }
+      : null,
     voice: run.tts?.voice || "",
     bgm: run.bgm || {},
     review: run.review || {},

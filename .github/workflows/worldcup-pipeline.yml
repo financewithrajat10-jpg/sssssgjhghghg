@@ -46,6 +46,26 @@ on:
       allow_needs_review_upload:
         description: "Upload private review MP4 even when QC says revise"
         required: false
+        default: "false"
+      quality_mode:
+        description: "off or v2"
+        required: false
+        default: "v2"
+      max_script_retries:
+        description: "V2 script retry limit"
+        required: false
+        default: "2"
+      max_visual_retries:
+        description: "V2 visual retry limit"
+        required: false
+        default: "3"
+      strict_publish:
+        description: "Block Telegram MP4 unless V2 publish gate passes"
+        required: false
+        default: "true"
+      telegram_send_failed_mp4:
+        description: "Send rendered V2 review-copy MP4 to Telegram even when final QC is below publish score"
+        required: false
         default: "true"
       force:
         description: "Ignore daily limit"
@@ -111,6 +131,13 @@ env:
   WORLD_CUP_BGM_FILE: ${{ vars.WORLD_CUP_BGM_FILE }}
   WORLD_CUP_ENABLE_WIKIMEDIA_VISUALS: ${{ vars.WORLD_CUP_ENABLE_WIKIMEDIA_VISUALS || 'false' }}
   WORLD_CUP_MIN_REAL_VISUAL_RATIO: ${{ vars.WORLD_CUP_MIN_REAL_VISUAL_RATIO || '1' }}
+  WORLD_CUP_QUALITY_MODE: ${{ vars.WORLD_CUP_QUALITY_MODE || 'v2' }}
+  WORLD_CUP_V2_SCRIPT_PUBLISH_SCORE: ${{ vars.WORLD_CUP_V2_SCRIPT_PUBLISH_SCORE || '85' }}
+  WORLD_CUP_V2_FINAL_PUBLISH_SCORE: ${{ vars.WORLD_CUP_V2_FINAL_PUBLISH_SCORE || '88' }}
+  WORLD_CUP_V2_MAX_SCRIPT_RETRIES: ${{ vars.WORLD_CUP_V2_MAX_SCRIPT_RETRIES || '2' }}
+  WORLD_CUP_V2_MAX_VISUAL_RETRIES: ${{ vars.WORLD_CUP_V2_MAX_VISUAL_RETRIES || '3' }}
+  WORLD_CUP_V2_REQUIRE_ZERO_FALLBACKS: ${{ vars.WORLD_CUP_V2_REQUIRE_ZERO_FALLBACKS || 'true' }}
+  WORLD_CUP_V2_TELEGRAM_SEND_FAILED_MP4: ${{ vars.WORLD_CUP_V2_TELEGRAM_SEND_FAILED_MP4 || 'true' }}
   GEMINI_LITE_TEXT_MODEL: ${{ vars.GEMINI_LITE_TEXT_MODEL || 'gemini-3.1-flash-lite' }}
   GEMINI_RETRY_DELAYS: ${{ vars.GEMINI_RETRY_DELAYS || '5000,10000,15000' }}
   WORLD_CUP_TOPICS: ${{ vars.WORLD_CUP_TOPICS }}
@@ -126,7 +153,12 @@ env:
   INPUT_RENDER: ${{ github.event.inputs.render || 'true' }}
   INPUT_UPLOAD: ${{ github.event.inputs.upload || 'true' }}
   INPUT_UPLOAD_TARGET: ${{ github.event.inputs.upload_target || vars.WORLD_CUP_UPLOAD_TARGET || 'telegram' }}
-  INPUT_ALLOW_NEEDS_REVIEW_UPLOAD: ${{ github.event.inputs.allow_needs_review_upload || (github.event_name == 'workflow_dispatch' && 'true' || 'false') }}
+  INPUT_ALLOW_NEEDS_REVIEW_UPLOAD: ${{ github.event.inputs.allow_needs_review_upload || 'false' }}
+  INPUT_QUALITY_MODE: ${{ github.event.inputs.quality_mode || vars.WORLD_CUP_QUALITY_MODE || 'v2' }}
+  INPUT_MAX_SCRIPT_RETRIES: ${{ github.event.inputs.max_script_retries || vars.WORLD_CUP_V2_MAX_SCRIPT_RETRIES || '2' }}
+  INPUT_MAX_VISUAL_RETRIES: ${{ github.event.inputs.max_visual_retries || vars.WORLD_CUP_V2_MAX_VISUAL_RETRIES || '3' }}
+  INPUT_STRICT_PUBLISH: ${{ github.event.inputs.strict_publish || 'true' }}
+  INPUT_TELEGRAM_SEND_FAILED_MP4: ${{ github.event.inputs.telegram_send_failed_mp4 || vars.WORLD_CUP_V2_TELEGRAM_SEND_FAILED_MP4 || 'true' }}
   INPUT_FORCE: ${{ github.event.inputs.force || (github.event_name == 'workflow_dispatch' && 'true' || 'false') }}
 
 jobs:
@@ -174,6 +206,11 @@ jobs:
             --upload "$INPUT_UPLOAD" \
             --upload-target "$INPUT_UPLOAD_TARGET" \
             --allow-needs-review-upload "$INPUT_ALLOW_NEEDS_REVIEW_UPLOAD" \
+            --quality-mode "$INPUT_QUALITY_MODE" \
+            --max-script-retries "$INPUT_MAX_SCRIPT_RETRIES" \
+            --max-visual-retries "$INPUT_MAX_VISUAL_RETRIES" \
+            --strict-publish "$INPUT_STRICT_PUBLISH" \
+            --telegram-send-failed-mp4 "$INPUT_TELEGRAM_SEND_FAILED_MP4" \
             --force "$INPUT_FORCE" | tee .tmp-worldcup/last-result.json
 
       - name: Verify MP4 delivery contract
@@ -209,6 +246,16 @@ jobs:
           }
           const mp4 = run.files?.mp4;
           if (!mp4) {
+            const qualityMode = String(process.env.INPUT_QUALITY_MODE || process.env.WORLD_CUP_QUALITY_MODE || '').toLowerCase();
+            const v2Blocked = qualityMode === 'v2' && ['pre_render_blocked', 'rendered_needs_review'].includes(run.status);
+            if (v2Blocked && run.qualityV2?.finalDecision === 'blocked') {
+              const alertSent = (run.telegram?.messages || []).some((message) => String(message.label || '').startsWith('v2-'));
+              if (!alertSent && /^(1|true|yes|on)$/i.test(String(process.env.INPUT_UPLOAD || ''))) {
+                throw new Error(`World Cup V2 blocked ${run.id}, but no Telegram quality alert was recorded.`);
+              }
+              console.log(`World Cup V2 correctly blocked non-publishable run ${run.id}: ${run.qualityV2?.issues?.slice(0, 3).join(' | ') || 'quality gate failed'}`);
+              process.exit(0);
+            }
             throw new Error(`World Cup run ${run.id} has no MP4 in run.files.`);
           }
           const mp4Path = path.join('.tmp-worldcup', 'runs', run.id, mp4);
@@ -222,6 +269,15 @@ jobs:
             if (!sentMp4) {
               throw new Error(`World Cup run ${run.id} did not record a Telegram MP4 delivery.`);
             }
+          }
+          if ((run.qualityMode === 'v2' || run.qualityV2?.mode === 'v2') && run.qualityV2?.finalDecision !== 'publish_candidate') {
+            const reviewCopyAllowed = /^(1|true|yes|on)$/i.test(String(process.env.INPUT_TELEGRAM_SEND_FAILED_MP4 || process.env.WORLD_CUP_V2_TELEGRAM_SEND_FAILED_MP4 || ''));
+            const sentMp4 = (run.telegram?.messages || []).some((message) => message.label === 'mp4');
+            if (reviewCopyAllowed && sentMp4) {
+              console.log(`World Cup V2 sent review-copy MP4 for ${run.id}; QC decision=${run.qualityV2?.finalDecision || 'unknown'}, score=${run.qualityV2?.finalScore || 0}.`);
+              process.exit(0);
+            }
+            throw new Error(`World Cup V2 run ${run.id} rendered MP4 but final decision was ${run.qualityV2?.finalDecision || 'unknown'}.`);
           }
           console.log(`Verified World Cup MP4: ${mp4Path}`);
           NODE
