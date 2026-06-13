@@ -11,6 +11,7 @@ const DEFAULT_FETCH_TIMEOUT_MS = 45000;
 const DEFAULT_DAILY_TOTAL_LIMIT = 3;
 const DEFAULT_DAILY_TREND_LIMIT = 1;
 const DEFAULT_TREND_COOLDOWN_MINUTES = 120;
+const DEFAULT_STALE_DISPATCH_RETRY_MINUTES = 120;
 const MAJOR_TEAM_PATTERN = /\b(usa|usmnt|united states|mexico|canada|brazil|argentina|uruguay|colombia|england|france|spain|germany|portugal)\b/i;
 const RECOGNIZABLE_PLAYER_PATTERN = /\b(messi|ronaldo|neymar|mbappe|mbapp[eé]|pulisic|bellingham|vinicius|vin[ií]cius|modric|kane|yamal|musiala|haaland)\b/i;
 
@@ -80,6 +81,7 @@ function controllerConfig(args = {}) {
     dailyTotalLimit: Math.max(1, numberArg(args.dailyTotalLimit || process.env.WORLD_CUP_CONTROLLER_DAILY_TOTAL_LIMIT, DEFAULT_DAILY_TOTAL_LIMIT)),
     dailyTrendLimit: Math.max(0, numberArg(args.dailyTrendLimit || process.env.WORLD_CUP_CONTROLLER_DAILY_TREND_LIMIT, DEFAULT_DAILY_TREND_LIMIT)),
     trendCooldownMinutes: Math.max(0, numberArg(args.trendCooldownMinutes || process.env.WORLD_CUP_CONTROLLER_TREND_COOLDOWN_MINUTES, DEFAULT_TREND_COOLDOWN_MINUTES)),
+    staleDispatchRetryMinutes: Math.max(15, numberArg(args.staleDispatchRetryMinutes || process.env.WORLD_CUP_CONTROLLER_STALE_DISPATCH_RETRY_MINUTES, DEFAULT_STALE_DISPATCH_RETRY_MINUTES)),
     requiredGroundedSources: Math.max(1, numberArg(args.requiredGroundedSources || process.env.WORLD_CUP_CONTROLLER_REQUIRED_GROUNDED_SOURCES, 2)),
     majorOnlyScheduled: boolArg(args.majorOnlyScheduled ?? process.env.WORLD_CUP_CONTROLLER_MAJOR_ONLY_SCHEDULED, true),
     intervalMinutes: Math.max(1, numberArg(args.intervalMinutes || process.env.WORLD_CUP_CONTROLLER_INTERVAL_MINUTES, DEFAULT_INTERVAL_MINUTES)),
@@ -113,13 +115,20 @@ function candidateKey(candidate) {
   return hashText(`${candidate.type}:${candidate.topic}:${candidate.teamA || ""}:${candidate.teamB || ""}:${candidate.kickoff || ""}`);
 }
 
-function wasDispatched(state, candidate) {
+function wasDispatched(state, candidate, config = {}) {
   const key = candidateKey(candidate);
   const entry = state.dispatched?.[key];
   if (!entry) return false;
   const conclusion = cleanText(entry.workflowRun?.conclusion || "").toLowerCase();
   if (["failure", "cancelled", "timed_out", "action_required"].includes(conclusion) || entry.error) {
     return false;
+  }
+  if (!conclusion && !entry.workflowRun?.id) {
+    const dispatchedMs = Date.parse(entry.dispatchedAt || entry.attemptedAt || "");
+    const retryMinutes = Number(config.staleDispatchRetryMinutes || DEFAULT_STALE_DISPATCH_RETRY_MINUTES);
+    if (Number.isFinite(dispatchedMs) && Date.now() - dispatchedMs > retryMinutes * 60 * 1000) {
+      return false;
+    }
   }
   return true;
 }
@@ -518,7 +527,7 @@ function selectCandidate(candidates, state, config, now = new Date()) {
   const sorted = candidates
     .filter((candidate) => candidate?.topic)
     .map((candidate) => {
-      const enriched = { ...candidate, key: candidateKey(candidate), duplicate: wasDispatched(state, candidate) };
+      const enriched = { ...candidate, key: candidateKey(candidate), duplicate: wasDispatched(state, candidate, config) };
       return { ...enriched, gate: candidateGate(enriched, state, config, now) };
     })
     .sort((a, b) => b.score - a.score);
