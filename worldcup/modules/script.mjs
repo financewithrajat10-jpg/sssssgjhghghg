@@ -53,6 +53,9 @@ import {
   WORLD_CUP_MIN_CLIP_RATIO,
   WORLD_CUP_MIN_REAL_VISUAL_RATIO,
   WORLD_CUP_RESEARCH_PASSES,
+  WORLD_CUP_RESEARCH_MODE,
+  WORLD_CUP_SCRAPE_MAX_PAGES,
+  WORLD_CUP_SCRAPE_SEARCH_RESULTS,
   WORLD_CUP_TELEGRAM_SEND_SIDECARS,
   WORLD_CUP_VISUAL_RETRY_ATTEMPTS,
   WORLD_CUP_VOICES,
@@ -713,12 +716,206 @@ ${memoryPrompt(memory)}
   ].slice(0, WORLD_CUP_RESEARCH_PASSES);
 }
 
+export function decodeBasicHtmlEntities(text = "") {
+  return String(text || "")
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_, code) => {
+      const value = Number(code);
+      return Number.isFinite(value) ? String.fromCharCode(value) : "";
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => {
+      const value = Number.parseInt(code, 16);
+      return Number.isFinite(value) ? String.fromCharCode(value) : "";
+    });
+}
+
+export function compactScrapedText(text = "") {
+  return repairCommonMojibake(
+    decodeBasicHtmlEntities(stripHtml(text))
+      .replace(/\b(cookie|privacy policy|subscribe|newsletter|sign in|advertisement|sponsored|all rights reserved)\b/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim(),
+  );
+}
+
+export function extractTagValue(text = "", tagName = "") {
+  const pattern = new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "i");
+  return decodeBasicHtmlEntities(text.match(pattern)?.[1] || "");
+}
+
+export async function fetchGoogleNewsRssItems(query, warnings = []) {
+  const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`;
+  try {
+    const xml = await fetchText(rssUrl);
+    return [...xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)]
+      .map((match) => {
+        const item = match[1];
+        const title = compactScrapedText(extractTagValue(item, "title"));
+        const link = cleanText(extractTagValue(item, "link"));
+        const description = compactScrapedText(extractTagValue(item, "description")).slice(0, 700);
+        const sourceTitle = compactScrapedText(extractTagValue(item, "source"));
+        const publishedAt = cleanText(extractTagValue(item, "pubDate"));
+        return {
+          title,
+          uri: link,
+          sourceUrl: link,
+          sourceTitle: sourceTitle || "Google News RSS",
+          publishedAt,
+          snippet: description,
+          provider: "google-news-rss",
+        };
+      })
+      .filter((item) => item.title && item.uri)
+      .slice(0, WORLD_CUP_SCRAPE_SEARCH_RESULTS);
+  } catch (error) {
+    warnings.push(`Google News RSS scrape failed for "${query}": ${error.message}`);
+    return [];
+  }
+}
+
+export function normalizeDuckDuckGoUrl(href = "") {
+  const decoded = decodeBasicHtmlEntities(href);
+  try {
+    const url = new URL(decoded, "https://duckduckgo.com");
+    const uddg = url.searchParams.get("uddg");
+    if (uddg) return decodeURIComponent(uddg);
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+
+export async function fetchDuckDuckGoItems(query, warnings = []) {
+  const url = `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  try {
+    const html = await fetchText(url);
+    return [...html.matchAll(/<a[^>]+class=["'][^"']*result__a[^"']*["'][^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)]
+      .map((match) => ({
+        title: compactScrapedText(match[2]),
+        uri: normalizeDuckDuckGoUrl(match[1]),
+        provider: "duckduckgo-html",
+      }))
+      .filter((item) => item.title && /^https?:\/\//i.test(item.uri))
+      .slice(0, WORLD_CUP_SCRAPE_SEARCH_RESULTS);
+  } catch (error) {
+    warnings.push(`DuckDuckGo scrape failed for "${query}": ${error.message}`);
+    return [];
+  }
+}
+
+export function sourceHost(source = {}) {
+  try {
+    return new URL(source.uri || source.sourceUrl || "").hostname.replace(/^www\./i, "");
+  } catch {
+    return "";
+  }
+}
+
+export function scrapedPageTitle(html = "", fallback = "") {
+  const title = compactScrapedText(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "");
+  return title || cleanText(fallback);
+}
+
+export async function fetchScrapedArticle(source, warnings = []) {
+  const uri = cleanText(source.uri || source.sourceUrl);
+  const rssSnippet = cleanText(source.snippet);
+  if (!/^https?:\/\//i.test(uri)) {
+    return rssSnippet ? { ...source, text: rssSnippet, title: cleanText(source.title) } : null;
+  }
+  try {
+    const html = await fetchText(uri);
+    const text = compactScrapedText(html).slice(0, 4200);
+    if (text.length < 160 && rssSnippet) {
+      return { ...source, text: rssSnippet, title: cleanText(source.title) };
+    }
+    return {
+      ...source,
+      title: scrapedPageTitle(html, source.title),
+      text,
+      host: sourceHost(source),
+    };
+  } catch (error) {
+    if (rssSnippet) {
+      return { ...source, text: rssSnippet, title: cleanText(source.title), fetchWarning: error.message };
+    }
+    warnings.push(`Article scrape failed for "${uri}": ${error.message}`);
+    return null;
+  }
+}
+
+export async function scrapeResearchPass(pass, warnings = []) {
+  const searchItems = [
+    ...(await fetchGoogleNewsRssItems(pass.query, warnings)),
+    ...(await fetchDuckDuckGoItems(pass.query, warnings)),
+  ];
+  const uniqueSources = [];
+  const seen = new Set();
+  for (const item of searchItems) {
+    const uri = cleanText(item.uri || item.sourceUrl);
+    if (!uri || seen.has(uri)) continue;
+    seen.add(uri);
+    uniqueSources.push(item);
+  }
+  const articles = [];
+  for (const source of uniqueSources.slice(0, WORLD_CUP_SCRAPE_MAX_PAGES)) {
+    const article = await fetchScrapedArticle(source, warnings);
+    if (article?.text) articles.push(article);
+  }
+  const noteText = articles
+    .map((article, index) =>
+      [
+        `Source ${index + 1}: ${cleanText(article.title || article.sourceTitle || "Untitled source")}`,
+        `URL: ${cleanText(article.uri || article.sourceUrl)}`,
+        `Provider: ${cleanText(article.provider || "web-scrape")}`,
+        article.fetchWarning ? `Fetch note: ${article.fetchWarning}` : "",
+        `Raw scraped excerpt: ${cleanText(article.text).slice(0, 3000)}`,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    )
+    .join("\n\n");
+  return {
+    ...pass,
+    text: noteText,
+    model: "web-scrape",
+    sources: articles.map((article) => ({
+      title: cleanText(article.title || article.sourceTitle || "Source"),
+      uri: cleanText(article.uri || article.sourceUrl),
+      provider: cleanText(article.provider || "web-scrape"),
+      host: cleanText(article.host || sourceHost(article)),
+    })),
+  };
+}
+
+export async function collectScrapedResearchNotes({ options, memory, warnings }) {
+  const researchNotes = [];
+  const sourceMap = new Map();
+  for (const pass of worldCupResearchPasses(options, memory)) {
+    const note = await scrapeResearchPass(pass, warnings);
+    if (cleanText(note.text).length < 160) {
+      warnings.push(`Scrape pass "${pass.id}" returned thin data.`);
+      continue;
+    }
+    researchNotes.push(note);
+    for (const source of note.sources || []) {
+      const uri = cleanText(source.uri || source.sourceUrl);
+      if (uri && !sourceMap.has(uri)) sourceMap.set(uri, source);
+    }
+  }
+  return { researchNotes, sources: [...sourceMap.values()].slice(0, 24) };
+}
+
 export async function consolidateWorldCupEvidence({ options, keyInfo, commentaryEvents, researchNotes, sources, memory, warnings }) {
   const sourceList = sources.map((source, index) => `${index + 1}. ${source.title || "Source"} - ${source.uri || source.sourceUrl}`).join("\n");
   const researchText = researchNotes.map((note) => `## ${note.id}: ${note.query}\n${note.text}`).join("\n\n").slice(0, 26000);
   const prompt = `
 You are the evidence editor for "World Cup Chaos Desk".
-Convert grounded research notes into a strict evidence pack for a short video.
+Convert scraped public web research notes into a strict evidence pack for a short video.
 
 Video:
 - Type: ${options.type}
@@ -727,10 +924,10 @@ Video:
 - Audience: ${options.audience}
 
 Available source URLs:
-${sourceList || "No grounded URLs were returned."}
+${sourceList || "No scraped source URLs were returned."}
 
 Research notes:
-${researchText || "No grounded research notes were returned."}
+${researchText || "No scraped research notes were returned."}
 
 Commentary-derived internal events:
 ${JSON.stringify(commentaryEvents, null, 2)}
@@ -742,6 +939,7 @@ Rules:
 - Output JSON only.
 - Every hard number, injury, ranking, quote, or recent-form claim must include a sourceUrl from the available source URLs.
 - If there are fewer than two useful sources, set evidenceQuality.needsReview=true and avoid hard statistical claims.
+- Treat scraped excerpts as raw material only: do not copy article phrasing into scripts or claims.
 - Do not include instructions as claims.
 - If exact data is weak, create opinion-safe angles instead of fake-specific stats.
 - Include creator angles that can start arguments in comments without becoming misinformation.
@@ -802,6 +1000,24 @@ export async function collectWorldCupData(options, keyInfo, warnings) {
     };
   }
 
+  const researchMode = cleanText(options.researchMode || WORLD_CUP_RESEARCH_MODE || "scrape").toLowerCase();
+  if (!["grounding", "search", "gemini-search"].includes(researchMode)) {
+    const { researchNotes, sources } = await collectScrapedResearchNotes({ options, memory, warnings });
+    if (!researchNotes.length) {
+      warnings.push("Scrape evidence fallback used: all web scrape passes returned thin data.");
+      return {
+        evidence: normalizeEvidencePack({ options, commentaryEvents, rawEvidence: {}, sources: [], researchNotes: [] }),
+        sources: [],
+        commentaryEvents,
+        memory,
+      };
+    }
+    const evidence = await consolidateWorldCupEvidence({ options, keyInfo, commentaryEvents, researchNotes, sources, memory, warnings });
+    evidence.researchModel = `web-scrape -> ${WRITER_MODEL}`;
+    evidence.researchMode = "scrape";
+    return { evidence, sources, commentaryEvents, memory };
+  }
+
   const researchNotes = [];
   const sourceMap = new Map();
   for (const pass of worldCupResearchPasses(options, memory)) {
@@ -838,6 +1054,7 @@ export async function collectWorldCupData(options, keyInfo, warnings) {
 
   const evidence = await consolidateWorldCupEvidence({ options, keyInfo, commentaryEvents, researchNotes, sources, memory, warnings });
   evidence.researchModel = `${SEARCH_MODEL} -> ${WRITER_MODEL}`;
+  evidence.researchMode = "grounding";
   return { evidence, sources, commentaryEvents, memory };
 }
 

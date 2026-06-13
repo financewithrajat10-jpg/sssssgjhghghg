@@ -264,8 +264,13 @@ npm run worldcup:controller
   - `WORLD_CUP_WORKFLOW_FILE=worldcup-pipeline.yml`
   - `WORLD_CUP_CONTROLLER_INTERVAL_MINUTES=15`
   - `WORLD_CUP_TREND_THRESHOLD=75`
+  - `WORLD_CUP_CONTROLLER_ENABLE_GEMINI_TRENDS=false` keeps trend discovery on fixtures plus YouTube Data API. Set it to `true` only when you intentionally want to spend Gemini search-grounding quota.
   - `WORLD_CUP_FIXTURES_JSON=[{"date":"2026-06-12","teamA":"USA","teamB":"Paraguay","kickoff":"2026-06-13T02:00:00Z","topic":"USA vs Paraguay World Cup prediction"}]`
 - Prediction videos trigger when a fixture enters the 12-hour-before-kickoff window. Postmatch videos trigger after expected full-time plus a safety delay.
+
+## World Cup research mode
+
+World Cup evidence collection defaults to `WORLD_CUP_RESEARCH_MODE=scrape`. The pipeline scrapes public web/RSS/search-result pages first, then asks `WORLD_CUP_WRITER_MODEL` (`gemini-3.1-flash-lite` by default) to convert the raw scraped excerpts into the existing evidence JSON shape. This avoids spending Gemini search-grounding quota on every research pass. Set `WORLD_CUP_RESEARCH_MODE=grounding` only for manual comparison runs.
 
 ## Voice demos and MP3
 

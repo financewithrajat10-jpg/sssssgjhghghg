@@ -83,6 +83,7 @@ function controllerConfig(args = {}) {
     trendCooldownMinutes: Math.max(0, numberArg(args.trendCooldownMinutes || process.env.WORLD_CUP_CONTROLLER_TREND_COOLDOWN_MINUTES, DEFAULT_TREND_COOLDOWN_MINUTES)),
     staleDispatchRetryMinutes: Math.max(15, numberArg(args.staleDispatchRetryMinutes || process.env.WORLD_CUP_CONTROLLER_STALE_DISPATCH_RETRY_MINUTES, DEFAULT_STALE_DISPATCH_RETRY_MINUTES)),
     requiredGroundedSources: Math.max(1, numberArg(args.requiredGroundedSources || process.env.WORLD_CUP_CONTROLLER_REQUIRED_GROUNDED_SOURCES, 2)),
+    enableGeminiTrends: boolArg(args.enableGeminiTrends ?? process.env.WORLD_CUP_CONTROLLER_ENABLE_GEMINI_TRENDS, false),
     majorOnlyScheduled: boolArg(args.majorOnlyScheduled ?? process.env.WORLD_CUP_CONTROLLER_MAJOR_ONLY_SCHEDULED, true),
     intervalMinutes: Math.max(1, numberArg(args.intervalMinutes || process.env.WORLD_CUP_CONTROLLER_INTERVAL_MINUTES, DEFAULT_INTERVAL_MINUTES)),
     retryLimit: Math.max(0, numberArg(args.retryLimit || process.env.WORLD_CUP_CONTROLLER_RETRY_LIMIT, DEFAULT_RETRY_LIMIT)),
@@ -626,7 +627,7 @@ async function runControllerOnce(config) {
     .map((fixture) => matchCandidateFromFixture(fixture, state, now, config))
     .filter(Boolean);
   const youtubeCandidates = config.offline ? [] : await buildYouTubeCandidates(config, warnings);
-  const geminiCandidate = config.offline ? null : await buildGeminiTrendCandidate(warnings);
+  const geminiCandidate = config.offline || !config.enableGeminiTrends ? null : await buildGeminiTrendCandidate(warnings);
   const rawCandidates = [...matchCandidates, ...youtubeCandidates, ...(geminiCandidate ? [geminiCandidate] : [])];
   const { selected, candidates } = selectCandidate(rawCandidates, state, config, now);
   const scan = {
