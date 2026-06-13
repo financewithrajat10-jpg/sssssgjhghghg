@@ -88,6 +88,7 @@ function controllerConfig(args = {}) {
     intervalMinutes: Math.max(1, numberArg(args.intervalMinutes || process.env.WORLD_CUP_CONTROLLER_INTERVAL_MINUTES, DEFAULT_INTERVAL_MINUTES)),
     retryLimit: Math.max(0, numberArg(args.retryLimit || process.env.WORLD_CUP_CONTROLLER_RETRY_LIMIT, DEFAULT_RETRY_LIMIT)),
     fetchTimeoutMs: Math.max(5000, numberArg(args.fetchTimeoutMs || process.env.WORLD_CUP_CONTROLLER_FETCH_TIMEOUT_MS, DEFAULT_FETCH_TIMEOUT_MS)),
+    telegramCommands: boolArg(args.telegramCommands ?? process.env.WORLD_CUP_CONTROLLER_TELEGRAM_COMMANDS, true),
     dryRun: boolArg(args.dryRun, false),
     offline: boolArg(args.offline, false),
     once: boolArg(args.once, false),
@@ -559,6 +560,10 @@ function workflowInputs(candidate) {
   };
 }
 
+function workflowRunUrl(config, runId) {
+  return `https://github.com/${config.repoFullName}/actions/runs/${runId}`;
+}
+
 async function githubRequest(config, pathname, { method = "GET", body = null } = {}) {
   if (!config.githubToken) throw new Error("Missing WORLD_CUP_GITHUB_TOKEN/GITHUB_FINE_GRAINED_PAT/GITHUB_TOKEN.");
   const response = await fetchWithControllerTimeout(`https://api.github.com${pathname}`, {
@@ -616,8 +621,169 @@ async function sendTelegram(config, text) {
   return await response.json();
 }
 
+async function telegramGetUpdates(config, offset = 0) {
+  if (!config.telegramBotToken || !config.telegramChatId || !config.telegramCommands) return [];
+  const url = new URL(`https://api.telegram.org/bot${config.telegramBotToken}/getUpdates`);
+  url.searchParams.set("timeout", "0");
+  url.searchParams.set("allowed_updates", JSON.stringify(["message"]));
+  if (offset) url.searchParams.set("offset", String(offset));
+  const response = await fetchWithControllerTimeout(url, {}, config.fetchTimeoutMs);
+  if (!response.ok) throw new Error(`Telegram getUpdates failed: ${response.status}`);
+  const data = await response.json();
+  return Array.isArray(data.result) ? data.result : [];
+}
+
+function isTelegramCommandForThisController(config, message = {}) {
+  const chatId = cleanText(message.chat?.id);
+  if (cleanText(config.telegramChatId) && chatId !== cleanText(config.telegramChatId)) return false;
+  if (config.telegramThreadId && cleanText(message.message_thread_id) !== cleanText(config.telegramThreadId)) return false;
+  return true;
+}
+
+function parseTelegramWorldCupCommand(text = "") {
+  const cleaned = cleanText(text);
+  const match = cleaned.match(/^\/(?:wc|worldcup)(?:@\w+)?(?:\s+([\s\S]+))?$/i);
+  if (!match) return null;
+  const body = cleanText(match[1] || "");
+  if (!body || /^help$/i.test(body)) {
+    return {
+      action: "help",
+      help: [
+        "World Cup commands:",
+        "/wc topic <topic> - create a viral pre-tournament/trend short",
+        "/wc pre <topic> - same as topic",
+        "/wc prediction Team A vs Team B | optional topic | optional kickoff ISO",
+        "/wc post Team A vs Team B | optional topic",
+        "/wc status - show controller status",
+      ].join("\n"),
+    };
+  }
+  if (/^status$/i.test(body)) return { action: "status" };
+  const parts = body.split("|").map(cleanText);
+  const head = parts[0] || "";
+  const headMatch = head.match(/^(topic|viral|trend|pre|pre-tournament|prediction|predict|post|postmatch)\s+([\s\S]+)$/i);
+  const modeWord = cleanText(headMatch?.[1] || "topic").toLowerCase();
+  const subject = cleanText(headMatch?.[2] || head);
+  const type =
+    ["prediction", "predict"].includes(modeWord)
+      ? "prediction"
+      : ["post", "postmatch"].includes(modeWord)
+        ? "postmatch"
+        : "pre-tournament";
+  let teamA = "";
+  let teamB = "";
+  const teamMatch = subject.match(/^(.+?)\s+(?:vs|v|versus)\s+(.+?)$/i);
+  if (teamMatch && type !== "pre-tournament") {
+    teamA = cleanText(teamMatch[1]);
+    teamB = cleanText(teamMatch[2]);
+  }
+  const topic =
+    parts[1] ||
+    (type === "prediction" && teamA && teamB
+      ? `${teamA} vs ${teamB} World Cup prediction`
+      : type === "postmatch" && teamA && teamB
+        ? `${teamA} vs ${teamB} post-match analysis: the moment that changed the game`
+        : subject);
+  return {
+    action: "dispatch",
+    candidate: {
+      type,
+      topic,
+      teamA,
+      teamB,
+      kickoff: parts[2] || "",
+      matchId: hashText(`telegram:${type}:${topic}:${teamA}:${teamB}:${parts[2] || ""}`),
+      score: 100,
+      reason: "Manual Telegram command.",
+      source: "telegram-command",
+      manual: true,
+    },
+  };
+}
+
+async function processTelegramCommands(config, state) {
+  if (!config.telegramCommands || !config.telegramBotToken || !config.telegramChatId) return [];
+  const updates = await telegramGetUpdates(config, Number(state.telegramUpdateOffset || 0)).catch((error) => {
+    state.lastTelegramCommandError = error.message;
+    return [];
+  });
+  const results = [];
+  for (const update of updates) {
+    state.telegramUpdateOffset = Math.max(Number(state.telegramUpdateOffset || 0), Number(update.update_id || 0) + 1);
+    const message = update.message || {};
+    const text = cleanText(message.text || "");
+    if (!text || !isTelegramCommandForThisController(config, message)) continue;
+    const command = parseTelegramWorldCupCommand(text);
+    if (!command) continue;
+    if (command.action === "help") {
+      await sendTelegram(config, command.help).catch(() => null);
+      results.push({ action: "help", updateId: update.update_id });
+      continue;
+    }
+    if (command.action === "status") {
+      const stats = dispatchStatsForToday(state, new Date());
+      await sendTelegram(
+        config,
+        [
+          "World Cup controller status:",
+          `Last status: ${state.lastStatus || "unknown"}`,
+          `Today: ${stats.total}/${config.dailyTotalLimit} total, ${stats.trends}/${config.dailyTrendLimit} trends`,
+          `Last dispatch: ${state.lastDispatchAt || "none"}`,
+        ].join("\n"),
+      ).catch(() => null);
+      results.push({ action: "status", updateId: update.update_id });
+      continue;
+    }
+    if (command.action !== "dispatch" || !command.candidate?.topic) continue;
+    const selected = command.candidate;
+    await sendTelegram(config, `Manual World Cup command received:\n${selected.topic}\nTriggering GitHub workflow...`).catch(() => null);
+    const dispatchedAt = nowIso();
+    let dispatch = null;
+    try {
+      dispatch = await dispatchWorkflow(config, selected);
+      markDispatched(state, selected, { ...dispatch, telegramUpdateId: update.update_id });
+      state.lastStatus = "telegram_workflow_dispatched";
+      state.lastDispatchAt = dispatch.dispatchedAt;
+      await writeJsonFile(config.stateFile, state);
+      let workflowRun = null;
+      for (let attempt = 0; attempt < 10 && !workflowRun; attempt += 1) {
+        await sleep(10_000);
+        workflowRun = await findRecentWorkflowRun(config, dispatchedAt);
+      }
+      if (workflowRun) {
+        await sendTelegram(config, `GitHub workflow started:\n${workflowRun.html_url || workflowRunUrl(config, workflowRun.id)}`).catch(() => null);
+        const completed = await pollWorkflowRun(config, workflowRun.id);
+        dispatch.workflowRun = {
+          id: completed.id,
+          url: completed.html_url,
+          status: completed.status,
+          conclusion: completed.conclusion,
+        };
+        await sendTelegram(config, `Manual World Cup run completed: ${completed.conclusion}\n${completed.html_url}`).catch(() => null);
+      } else {
+        dispatch.workflowRun = { warning: "Could not locate workflow run after dispatch." };
+        await sendTelegram(config, "Manual World Cup workflow dispatched, but controller could not locate the run yet.").catch(() => null);
+      }
+    } catch (error) {
+      dispatch = { error: error.message, attemptedAt: dispatchedAt, inputs: workflowInputs(selected) };
+      state.lastStatus = "telegram_dispatch_failed";
+      state.lastError = error.message;
+      await sendTelegram(config, `Manual World Cup command failed: ${error.message}`).catch(() => null);
+    }
+    markDispatched(state, selected, dispatch);
+    results.push({ action: "dispatch", selected, dispatch, updateId: update.update_id });
+  }
+  return results;
+}
+
 async function runControllerOnce(config) {
   const state = await readJsonFile(config.stateFile, { version: 1, dispatched: {}, scans: [] });
+  const commandResults = await processTelegramCommands(config, state);
+  if (commandResults.length) {
+    state.lastTelegramCommandAt = nowIso();
+    await writeJsonFile(config.stateFile, state);
+    return { telegramCommands: commandResults, skipped: false };
+  }
   const warnings = [];
   const now = new Date();
   state.lastStatus = "scanning";

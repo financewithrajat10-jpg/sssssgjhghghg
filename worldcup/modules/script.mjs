@@ -387,16 +387,35 @@ export function clampScore(value, min = 0, max = 10) {
   return Math.max(min, Math.min(max, Number(value) || 0));
 }
 
+export function splitScriptSentences(text) {
+  return cleanText(text)
+    .replace(/\bvs\.\s+/gi, "vs ")
+    .replace(/\bU\.S\.\s*/g, "US ")
+    .replace(/\bU\.S\.M\.N\.T\.\s*/gi, "USMNT ")
+    .split(/(?<=[.!?])\s+/)
+    .filter(Boolean);
+}
+
 export function firstSentence(text) {
-  return cleanText(text).split(/(?<=[.!?])\s+/)[0] || cleanText(text);
+  const sentences = splitScriptSentences(text);
+  if (/^(what a start|statement made|glory and gloom|yes|that got real fast)[!.]?$/i.test(sentences[0] || "") && sentences[1]) {
+    return cleanText(`${sentences[0]} ${sentences[1]}`);
+  }
+  return sentences[0] || cleanText(text);
+}
+
+export function withoutFirstSentence(text) {
+  const sentences = splitScriptSentences(text);
+  const dropCount = /^(what a start|statement made|glory and gloom|yes|that got real fast)[!.]?$/i.test(sentences[0] || "") && sentences[1] ? 2 : 1;
+  return cleanText(sentences.slice(dropCount).join(" "));
 }
 
 export function hasViralContradiction(text) {
-  return /\b(everyone thinks|people think|but|actually|blueprint|should terrify|wake-up call|loss wasn'?t|trap|danger|wrong|break|pressure|real opponent|not .* it'?s|isn'?t ready|not ready|unprepared|instead|nobody|risk|hot take|contrarian)\b/i.test(cleanText(text));
+  return /\b(what a start|statement made|everyone thinks|people think|but|actually|blueprint|should terrify|wake-up call|loss wasn'?t|trap|danger|wrong|break|pressure|real opponent|not .* it'?s|isn'?t ready|not ready|unprepared|instead|nobody|risk|hot take|contrarian|warning|injury|calf|dominated|smashed|crushing|final|bracket|last dance|fairy tale|nightmare|impossible|requires)\b/i.test(cleanText(text));
 }
 
 export function hasMemorableFootballLine(text) {
-  return /\b(group chat|comment section|panic button|football court|football jail|receipts|cooked|career mode|aura|fraud watch|chaos|rent is due|trap game|pressure cooker|spreadsheet|restart button|playing the noise|crowd a trap|home advantage is cute)\b/i.test(cleanText(text));
+  return /\b(group chat|comment section|panic button|football court|football jail|receipts|cooked|career mode|aura|fraud watch|chaos|rent is due|trap game|pressure cooker|spreadsheet|restart button|playing the noise|crowd a trap|home advantage is cute|filthy|main character|cheat code|check-engine light|fireworks display|on fire|holding their breath|absolutely dominated|what a start|baby|absolute scenes|rewind that|not all sunshine)\b/i.test(cleanText(text));
 }
 
 export const FOOTBALL_JOKE_LINES = [
@@ -430,10 +449,10 @@ export function scoreFirstThreeSecondHook(text, evidence = {}) {
     (Array.isArray(evidence.keyPlayers) && evidence.keyPlayers.some((player) => cleanText(player?.name || player)));
   const genericWorldCupTarget = /\bworld cup\b/i.test(hook) && !hasEvidenceTarget;
   const concrete = hasSpecificTarget || genericWorldCupTarget;
-  const stakes = /\b(pressure|trap|danger|break|wrong|panic|end|risk|host|home|chaos|favorite|upset|crowd|warning|red flag|blueprint|exploit|holes|loss|signs|isn'?t ready|not ready|unprepared|fragile|belongs?)\b/i.test(hook);
-  const curiosity = /\b(but|actually|why|nobody|real|blueprint|warning|wake-up|one stat|one thing|not|isn'?t|aren'?t|can'?t|won'?t|instead|hot take|contrarian)\b/i.test(hook);
+  const stakes = /\b(pressure|trap|danger|break|wrong|panic|end|risk|host|home|chaos|favorite|upset|crowd|warning|red flag|blueprint|exploit|holes|loss|signs|isn'?t ready|not ready|unprepared|fragile|belongs?|dominated|smashed|crushing|injury|calf|scary|price|cost|thread|terrified|sidelined|too high|hanging|final|bracket|last dance|fairy tale|nightmare|impossible|requires)\b/i.test(hook);
+  const curiosity = /\b(what a start|but|actually|why|nobody|real|blueprint|warning|wake-up|one stat|one thing|not|isn'?t|aren'?t|can'?t|won'?t|instead|hot take|contrarian|scary|all sunshine|math|requires|only|lie|killed)\b/i.test(hook);
   const shortEnough = hook.length <= 125;
-  const questionOpener = /^(is|are|can|could|do|does|did|will|would|should|what|why|how)\b/i.test(hook);
+  const questionOpener = /^(is|are|can|could|do|does|did|will|would|should|what|why|how)\b/i.test(hook) && !/^what a start\b/i.test(hook);
   const score = (concrete ? 28 : 10) + (stakes ? 28 : 8) + (curiosity ? 28 : 8) + (shortEnough ? 16 : 6);
   const hardFails = [];
   if (!concrete) hardFails.push("First three seconds do not name a recognizable team/player/topic.");
@@ -1402,7 +1421,15 @@ ${(viralStrategy.editPlan || []).map((step) => `  - ${step}`).join("\n") || "  -
 - The first 12-16 spoken words must include a recognizable team/player/topic, a pressure word, and a curiosity gap. No slow preamble.
 - Never open with a soft question like "Is the USMNT ready..." or "Can they handle..." Start with a direct claim.
 - Preferred hook shape: "Germany just gave Paraguay the blueprint, and that should terrify the USMNT."
+- For post-match videos, prefer a creator recap hook over abstract analysis: result + star/moment + tension in one breath.
+- Good post-match hook shape: "WHAT A START! The USMNT just smashed Paraguay 4-1, but Pulisic's calf is the warning."
+- Bad abstract opener to avoid forever: "The World Cup take everyone likes is hiding the part fans will argue about."
+- Post-match scripts may include 2 to 4 bracketed edit cues inside the spoken script, like [SHOW HIGHLIGHT: BALOGUN CELEBRATION], [SHOW HIGHLIGHT: REYNA GOAL], or [SHOW HIGHLIGHT: PULISIC LIMPS OFF]. These cues help visuals and must be mirrored in visualMoments.
 - Include exactly one memorable football-native line that could become a comment quote.
+- Every post-match script MUST include all three creator-punch ingredients:
+  1. one hype phrase: "on fire", "FILTHY", "absolutely dominated", "what a start", "absolute scenes", or a fresh equivalent.
+  2. one emotional phrase: "fans holding their breath", "the mood changed", "not all sunshine", "the stadium went quiet", or a fresh equivalent.
+  3. one casual fan reaction: "baby", "be honest", "I am sweating", "tell me I am overreacting", "are we panicking yet?", or a fresh equivalent.
 - Include 3 to 5 visual moments as plain phrases.
 - Reject yourself if the script could fit any sport after replacing team names.
 - Prefer concrete fan language over abstract tactical poetry.
@@ -1432,6 +1459,10 @@ Video target:
 - Word target: 80 to 115 spoken words. Never exceed 125 words.
 - Structure: 0-2s hook, 2-7s funny promise, 7-18s one data/pressure clue, 18-32s fan-story + joke, 32-45s soft punchline/comment trigger
 - First sentence must be the actual scroll-stopping claim. Do not begin with "I'm going contrarian", "hot take", "here's why", or a setup phrase.
+- If this is postmatch, start like a creator reacting to the match result, not a neutral preview. Use final score, named player, key goal/injury/turning point, or emotional shock immediately.
+- Postmatch opening formula: "WHAT A START!" or "That got real fast!" + team/result + "but/so" tension. Example: "WHAT A START! The USMNT just smashed Paraguay 4-1, but Pulisic's calf is the warning."
+- A good postmatch script should feel close to this shape without copying facts unless evidence supports them:
+  "WHAT A START! The USMNT just smashed Paraguay 4-1, and this did not feel like a lucky opener. [SHOW HIGHLIGHT: BALOGUN CELEBRATION] Balogun looked ruthless, Reyna gave the game its 'wait, rewind that' moment, and then the mood changed when Pulisic came off. [SHOW HIGHLIGHT: PULISIC LIMPS OFF] So yes, the win is loud. But the real question is scarier: did the USMNT announce themselves, or did Paraguay make them look too comfortable?"
 - Prefer direct hooks like "Home advantage might actually destroy the USMNT" over meta hooks like "I'm going contrarian."
 - First 3-second gate: the first 12-16 spoken words must name the target, create pressure/debate, and make viewers ask "why?"
 - Do not start with a question. For Shorts, claim first and ask later.
@@ -1450,6 +1481,7 @@ Required in every script:
 - one real evidence-backed data point if trusted evidence exists
 - one clear opinion
 - one football-native joke or metaphor that sounds like a fan talking, not a writer showing off
+- one hype phrase, one emotional phrase, and one casual fan reaction in the actual script. This is mandatory for postmatch recaps.
 - one creator-native quote line in the actual script, similar in quality to:
   "Home advantage is cute until your own fans start sounding like the comment section."
   "The crowd is an extra man until it opens the group chat."
@@ -1459,6 +1491,12 @@ Required in every script:
 - one ending that makes comments likely
 - a human voice rhythm: short sentences, natural contractions, question beats, and room for pitch changes
 - one first-frame cover text idea in the title or hook language, such as "HOME ADVANTAGE TRAP" or "USMNT PANIC MODE"
+- For postmatch: include 2 to 4 bracketed visual cues directly in text only when the evidence supports the moment, for example [SHOW HIGHLIGHT: BALOGUN CELEBRATION]. Do not invent a highlight that is not in evidence.
+- For postmatch: the script should feel more like "Gio Reyna? FILTHY!" than "tactical pressure was efficient." Use simple creator reactions before analysis.
+- The three scripts must be genuinely different:
+  serious_analyst = hype recap with receipts
+  funny_fan_analyst = fan-chaos recap with one clean joke
+  dramatic_storyteller = tension/what-it-means recap centered on the biggest emotional swing
 
 Avoid:
 - generic openings like "The 2026 World Cup is coming"
@@ -1472,6 +1510,7 @@ Avoid:
 - fake certainty
 - copied commentary wording
 - bland ESPN preview tone
+- abstract opener: "The World Cup take everyone likes is hiding the part fans will argue about."
 - random player claims not in evidence
 - overused "you won't believe" hooks
 - hard numbers unless they appear in sourcedClaims with sourceUrl and confidence >= 0.6
@@ -1506,7 +1545,7 @@ Return JSON:
       "memorableLine": "the exact creator-native quote line used inside the script",
       "commentTrigger": "",
       "coverText": "",
-      "visualMoments": [""],
+      "visualMoments": ["mirror any bracketed cues plus 1-2 extra visual beats"],
       "factualClaims": [""],
       "riskNotes": [""]
     },
@@ -1581,7 +1620,7 @@ export function scoreViral2Script(script, evidence, viralStrategy = {}) {
   const unsupportedHardStat = hasHardStat(`${text} ${script?.dataPoint || ""}`) && !trustedSourceClaims(evidence).some((claim) => hasHardStat(claim.claim));
   const generic =
     /\b(the 2026 world cup is coming|this match will be interesting|anything can happen|both teams will try|football is unpredictable|at the end of the day)\b/i.test(text) ||
-    !/\b(world cup|usmnt|usa|mexico|brazil|argentina|france|spain|england|paraguay|home|host|pressure|favorite|underdog|crowd|group)\b/i.test(text);
+    !/\b(world cup|usmnt|usa|mexico|brazil|argentina|portugal|france|spain|england|paraguay|messi|ronaldo|home|host|pressure|favorite|underdog|crowd|group|bracket|final)\b/i.test(text);
   const harshPunditTone = /\b(national humiliation|psychological death trap|death trap|sucker'?s bet|delusional|glass cannon|destined to break|crushed|failure|disaster|meltdown|crisis|collapse|choke|fold|crack under|shatter)\b/i.test(text);
   const dimensions = {
     hook: hasViralContradiction(opening) && opening.length <= 115 ? 18 : hasViralContradiction(opening) ? 14 : 7,
@@ -1635,7 +1674,44 @@ export function scoreViral2Script(script, evidence, viralStrategy = {}) {
 }
 
 export function hardenedOpeningForEvidence(evidence = {}, viralStrategy = {}) {
-  const text = cleanText(`${evidence.topic || ""} ${evidence.match?.teamA || ""} ${evidence.match?.teamB || ""}`).toLowerCase();
+  const matchLabel = [evidence.match?.teamA, evidence.match?.teamB].map(cleanText).filter(Boolean).join(" vs ");
+  const evidenceText = cleanText([
+    evidence.topic || "",
+    matchLabel,
+    JSON.stringify(evidence.sourcedClaims || []),
+    JSON.stringify(evidence.turningPoints || []),
+    JSON.stringify(evidence.keyPlayers || []),
+  ].join(" ")).toLowerCase();
+  const text = evidenceText;
+  const label = matchLabel || cleanText(evidence.topic || "this World Cup match");
+  const scoreMatch = evidenceText.match(/\b(\d+)\s*[-–]\s*(\d+)\b/);
+  const score = scoreMatch ? `${scoreMatch[1]}-${scoreMatch[2]}` : "";
+  const playerFromList = Array.isArray(evidence.keyPlayers)
+    ? evidence.keyPlayers.map((player) => cleanText(player?.name || player)).find(Boolean)
+    : "";
+  const playerFromEvidence = cleanText((evidenceText.match(/\b(balogun|reyna|pulisic|messi|ronaldo|mbappe|neymar|vinicius|bellingham)\b/i) || [])[1] || "");
+  const player = playerFromList || playerFromEvidence;
+  if (/usmnt|usa|united states/.test(text) && /paraguay/.test(text) && score) {
+    if (/pulisic|calf|knock|injur/.test(text)) {
+      return `WHAT A START! The USMNT just smashed Paraguay ${score}, but Pulisic's calf is the warning.`;
+    }
+    if (/balogun/.test(text)) {
+      return `WHAT A START! The USMNT just smashed Paraguay ${score}, and Balogun made it feel like a warning.`;
+    }
+    return `WHAT A START! The USMNT just smashed Paraguay ${score}, but the real debate starts now.`;
+  }
+  if (score && player) {
+    return `WHAT A START! ${label} finished ${score}, and ${player} turned it into a World Cup warning.`;
+  }
+  if (score) {
+    return `WHAT A START! ${label} finished ${score}, but the real debate starts now.`;
+  }
+  if (/messi/.test(text) && /ronaldo/.test(text)) {
+    if (/bracket|48-team|final|group|knockout|scenario/.test(text)) {
+      return "The Messi-Ronaldo final sounds like a fairy tale, but the 2026 bracket math is rude.";
+    }
+    return "The Messi-Ronaldo last dance sounds perfect, but World Cup reality has one ugly problem.";
+  }
   if (/usmnt|usa|united states/.test(text) && /germany/.test(text) && /paraguay/.test(text)) {
     return "Germany just gave Paraguay the blueprint, and that should terrify the USMNT.";
   }
@@ -1659,9 +1735,9 @@ export function hardenedOpeningForEvidence(evidence = {}, viralStrategy = {}) {
   }
   const strategyHook = (Array.isArray(viralStrategy?.hooks) ? viralStrategy.hooks : []).find((hook) => {
     const scored = scoreFirstThreeSecondHook(hook, evidence);
-    return scored.decision === "pass" && !/^(is|are|can|could|do|does|did|will|would|should|what|why|how)\b/i.test(cleanText(hook));
+    return scored.decision === "pass" && (!/^(is|are|can|could|do|does|did|will|would|should|what|why|how)\b/i.test(cleanText(hook)) || /^what a start\b/i.test(cleanText(hook)));
   });
-  return strategyHook || "The World Cup take everyone likes is hiding the part fans will argue about.";
+  return strategyHook || `${label} just gave us the first real World Cup pressure test.`;
 }
 
 export function hardenViralOpening(script, evidence = {}, viralStrategy = {}, warnings = []) {
@@ -1674,7 +1750,7 @@ export function hardenViralOpening(script, evidence = {}, viralStrategy = {}, wa
     return { script, quality, changed: false };
   }
   const opening = hardenedOpeningForEvidence(evidence, viralStrategy);
-  const rest = cleanText(text.replace(firstSentence(text), ""));
+  const rest = withoutFirstSentence(text);
   const hardened = {
     ...script,
     text: cleanText(`${opening} ${rest}`),
@@ -1894,9 +1970,12 @@ The script below failed Viral 2.0 / V2 publish quality gates. Rewrite it once.
 Keep:
 - Same topic and safe evidence.
 - 75-115 spoken words.
-- One complete first-sentence contradiction.
+- One complete first-sentence hook with a hard opinion, contradiction, result shock, or curiosity gap.
 - First 12-16 words must pass the first-3-second gate: recognizable target + pressure/debate + curiosity gap.
 - Never open with a question. Rewrite any "Is/Are/Can/Will..." opener into a direct claim.
+- For postmatch videos, rewrite like a high-energy creator recap. The first sentence must include the score, key team/player/moment, or match swing if evidence provides it.
+- Strong postmatch shape: "WHAT A START! The USMNT just smashed Paraguay 4-1, but Pulisic's calf is the warning."
+- Include 2 to 3 bracketed visual cues in the text when supported by evidence, like [SHOW HIGHLIGHT: BALOGUN CELEBRATION]. Mirror those in visualMoments.
 - One memorable football-native line.
 - One clear opinion.
 - One debate-ending question.
@@ -1904,6 +1983,7 @@ Keep:
 - If the topic, title, or cover promises a numbered list such as "3 paths", "4 reasons", or "2 scenarios", the script must explicitly deliver every item using clear labels like "Path one", "Path two", and "Path three". Do not promise three items and spend the whole script on one branch.
 - Keep the tone soft, funny, and nervous, not angry or doom-heavy.
 - Avoid: national humiliation, psychological death trap, sucker's bet, delusional, glass cannon, destined to break, crushed, failure, disaster, meltdown, collapse, choke, fold, crisis.
+- Never use this abstract opener or a close paraphrase: "The World Cup take everyone likes is hiding the part fans will argue about."
 - Prefer fresh topic-specific equivalents of: panic button, group chat courtroom, football court hearing, souffle during an earthquake. Do not repeat the exact same creator line across videos.
 - The rewritten script MUST include one quotable creator line in this style:
   "Home advantage is cute until your own fans start sounding like the comment section."
@@ -1976,6 +2056,9 @@ Judge these three World Cup scripts for factual support, hook strength, humor au
 Penalize any hard number, ranking, injury, odds, or recent-form claim that is not clearly supported by evidence.sourcedClaims with a sourceUrl.
 Reward scripts that use urgent, mysterious, controversial, contrarian, story, data-shock, or risk hooks without becoming clickbait misinformation.
 Strongly prefer scripts that feel like a funny, soft, natural football creator, not a TV analyst.
+For postmatch scripts, strongly reward creator-recap openings that use the result, named player, or key turning point immediately, then add a "but/so" tension.
+For postmatch scripts, reward 2-4 supported bracketed visual cues such as [SHOW HIGHLIGHT: PLAYER CELEBRATION] when they match evidence and visualMoments.
+Strongly penalize abstract openers like "The World Cup take everyone likes is hiding the part fans will argue about."
 Prefer 80-115 spoken words. Penalize scripts over 125 words unless they are exceptional.
 Penalize heavy negative phrases like "absolute failure", "funeral march", "silent killer", "crumble", "disaster", "meltdown", "collapse", "choke", "fold", or "crisis" when a softer funny version could work.
 Reward pitch-friendly writing: short sentences, playful questions, pauses before punchlines, and one memorable joke.
@@ -2059,7 +2142,10 @@ Revise this World Cup short script once.
 Keep it factual, fan-native, funny, and easy for TTS.
 Do not add unsupported facts.
 Use a sharper comment-driving hook. Avoid generic openings.
+For postmatch, open like a creator recap with result + player/moment + tension, for example: "WHAT A START! The USMNT just smashed Paraguay 4-1, but Pulisic's calf is the warning."
+If supported by evidence, add 2-3 bracketed visual cues in the script and mirror them in visualMoments.
 If evidence is weak, remove hard stats and frame the argument as opinion or pressure-read.
+Never use this abstract opener or a close paraphrase: "The World Cup take everyone likes is hiding the part fans will argue about."
 Keep or add one quotable creator-native line in the actual script, like:
 - "Home advantage is cute until your own fans start sounding like the comment section."
 - "The crowd is an extra man until it opens the group chat."

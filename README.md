@@ -263,10 +263,16 @@ npm run worldcup:controller
   - `WORLD_CUP_GITHUB_REF=main`
   - `WORLD_CUP_WORKFLOW_FILE=worldcup-pipeline.yml`
   - `WORLD_CUP_CONTROLLER_INTERVAL_MINUTES=15`
-  - `WORLD_CUP_TREND_THRESHOLD=75`
+  - `WORLD_CUP_TREND_THRESHOLD=95`
   - `WORLD_CUP_CONTROLLER_ENABLE_GEMINI_TRENDS=false` keeps trend discovery on fixtures plus YouTube Data API. Set it to `true` only when you intentionally want to spend Gemini search-grounding quota.
+  - `WORLD_CUP_CONTROLLER_TELEGRAM_COMMANDS=true` lets the VM listen for manual Telegram commands.
   - `WORLD_CUP_FIXTURES_JSON=[{"date":"2026-06-12","teamA":"USA","teamB":"Paraguay","kickoff":"2026-06-13T02:00:00Z","topic":"USA vs Paraguay World Cup prediction"}]`
 - Prediction videos trigger when a fixture enters the 12-hour-before-kickoff window. Postmatch videos trigger after expected full-time plus a safety delay.
+- Telegram manual dispatch commands:
+  - `/wc topic Ronaldo vs Messi 2026 World Cup bracket`
+  - `/wc prediction USA vs Paraguay | USA vs Paraguay pressure prediction | 2026-06-13T02:00:00Z`
+  - `/wc post USA vs Paraguay | USA vs Paraguay post-match: the moment that changed the game`
+  - `/wc status`
 
 ## World Cup research mode
 

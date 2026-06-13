@@ -5,7 +5,7 @@ import {
   WORLD_CUP_V2_FINAL_PUBLISH_SCORE,
   WORLD_CUP_V2_SCRIPT_PUBLISH_SCORE,
 } from "./utils.mjs";
-import { hasViralContradiction, scoreFirstThreeSecondHook, scoreViral2Script } from "./script.mjs";
+import { firstSentence, hasViralContradiction, scoreFirstThreeSecondHook, scoreViral2Script } from "./script.mjs";
 
 export const V2_BLOCKED_STATUSES = new Set(["pre_render_blocked", "rendered_needs_review"]);
 
@@ -68,7 +68,7 @@ export function scriptWordCount(script = {}) {
 }
 
 export function firstSentenceOf(text) {
-  return cleanText(text).split(/(?<=[.!?])\s+/).find(Boolean) || cleanText(text).slice(0, 140);
+  return firstSentence(text) || cleanText(text).slice(0, 140);
 }
 
 export function recentForbiddenPhrases(memory = {}) {

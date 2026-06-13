@@ -617,15 +617,19 @@ async function generateWorldCupRun(input = {}) {
       return await blockQualityV2Run(run, "visual", options);
     }
     if (!captionAudioGate.pass) {
-      run.warnings.push("V2 render blocked because caption/audio gate did not pass.");
-      return await blockQualityV2Run(run, "captionAudio", options);
+      const allowReviewRender = normalizeBool(options.telegramSendFailedMp4 ?? options.v2TelegramSendFailedMp4, true);
+      if (!allowReviewRender) {
+        run.warnings.push("V2 render blocked because caption/audio gate did not pass.");
+        return await blockQualityV2Run(run, "captionAudio", options);
+      }
+      run.warnings.push("V2 caption/audio gate did not pass, but review-copy render is enabled; rendering MP4 with quality score/issues.");
     }
     updateQualityGate(run, "preRender", {
       version: "pre-render-v2",
-      pass: true,
+      pass: Boolean(storyboardGate.pass && captionAudioGate.pass),
       score: Math.round((Number(storyboardGate.score || 0) + Number(captionAudioGate.score || 0)) / 2),
-      issues: [],
-      hardFails: [],
+      issues: captionAudioGate.pass ? [] : ["Review-copy render allowed despite caption/audio timing issues."],
+      hardFails: captionAudioGate.pass ? [] : captionAudioGate.hardFails || [],
       checkedAt: nowIso(),
     });
     await writeQualityV2Sidecars(run);
