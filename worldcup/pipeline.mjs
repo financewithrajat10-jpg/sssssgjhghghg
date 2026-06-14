@@ -554,24 +554,32 @@ async function generateWorldCupRun(input = {}) {
     const captionAudioGate = scoreCaptionAudioGateV2({ run, options });
     updateQualityGate(run, "captionAudio", captionAudioGate);
     await writeQualityV2Sidecars(run);
-    if (!storyboardGate.pass) {
-      run.warnings.push("V2 render blocked because storyboard/visual gate did not pass.");
-      return await blockQualityV2Run(run, "visual", options);
-    }
-    if (!captionAudioGate.pass) {
-      const allowReviewRender = normalizeBool(options.telegramSendFailedMp4 ?? options.v2TelegramSendFailedMp4, true);
-      if (!allowReviewRender) {
+    const allowPreRenderReview = normalizeBool(options.telegramSendFailedMp4 ?? options.v2TelegramSendFailedMp4, true);
+    const preRenderHardFails = [
+      ...(!storyboardGate.pass ? storyboardGate.hardFails || [] : []),
+      ...(!captionAudioGate.pass ? captionAudioGate.hardFails || [] : []),
+    ];
+    const preRenderIssues = [
+      ...(!storyboardGate.pass ? storyboardGate.issues || [] : []),
+      ...(!captionAudioGate.pass ? captionAudioGate.issues || [] : []),
+    ];
+    if (!storyboardGate.pass || !captionAudioGate.pass) {
+      if (!allowPreRenderReview) {
+        if (!storyboardGate.pass) {
+          run.warnings.push("V2 render blocked because storyboard/visual gate did not pass.");
+          return await blockQualityV2Run(run, "visual", options);
+        }
         run.warnings.push("V2 render blocked because caption/audio gate did not pass.");
         return await blockQualityV2Run(run, "captionAudio", options);
       }
-      run.warnings.push("V2 caption/audio gate did not pass, but review-copy render is enabled; rendering MP4 with quality score/issues.");
+      run.warnings.push(`V2 pre-render gate did not pass, but review-copy render is enabled; rendering MP4 with quality score/issues: ${preRenderHardFails.slice(0, 3).join(" | ")}`);
     }
     updateQualityGate(run, "preRender", {
       version: "pre-render-v2",
       pass: Boolean(storyboardGate.pass && captionAudioGate.pass),
       score: Math.round((Number(storyboardGate.score || 0) + Number(captionAudioGate.score || 0)) / 2),
-      issues: captionAudioGate.pass ? [] : ["Review-copy render allowed despite caption/audio timing issues."],
-      hardFails: captionAudioGate.pass ? [] : captionAudioGate.hardFails || [],
+      issues: storyboardGate.pass && captionAudioGate.pass ? [] : ["Review-copy render allowed despite pre-render quality issues.", ...preRenderIssues],
+      hardFails: preRenderHardFails,
       checkedAt: nowIso(),
     });
     await writeQualityV2Sidecars(run);
