@@ -80,14 +80,11 @@ import {
 import {
   buildViral2Strategy,
   collectWorldCupData,
+  editScriptsV20,
   generateScripts,
-  hardenViralOpening,
   judgeScripts,
   polishScriptForShorts,
-  repairScriptPromiseContract,
-  reviseViral2Script,
   rewriteForTts,
-  sanitizeScriptAgainstEvidence,
   scoreViral2Script,
   totalJudgeScore,
 } from "./modules/script.mjs";
@@ -322,118 +319,47 @@ async function generateWorldCupRun(input = {}) {
   const customSelectedScript = buildCustomSelectedScript(options, run.evidence, run.warnings);
   let judgeResult = null;
   let polishedSelectedScript = null;
+  let scriptEditorResult = null;
+  run.editedScripts = [];
   if (customSelectedScript) {
     run.scripts = [customSelectedScript];
     polishedSelectedScript = customSelectedScript;
   } else {
     const scriptResult = await generateScripts(run.evidence, keyInfo, options, run.warnings);
     run.scripts = scriptResult.scripts;
-    judgeResult = await judgeScripts({ scripts: run.scripts, evidence: run.evidence, keyInfo, options, warnings: run.warnings });
+    let scriptsForJudging = run.scripts;
+    if (isViral2(options)) {
+      scriptEditorResult = await editScriptsV20({
+        scripts: run.scripts,
+        evidence: run.evidence,
+        keyInfo,
+        options,
+        warnings: run.warnings,
+      });
+      run.editedScripts = Array.isArray(scriptEditorResult.scripts) && scriptEditorResult.scripts.length ? scriptEditorResult.scripts : [];
+      if (run.editedScripts.length === run.scripts.length) {
+        scriptsForJudging = run.editedScripts;
+      } else {
+        run.warnings.push("V2 2.0 editor did not return all candidates; evaluator used rough generated scripts.");
+        run.editedScripts = [];
+      }
+      run.viralStrategy.scriptEditor = {
+        version: scriptEditorResult.version,
+        model: scriptEditorResult.model,
+        editedCount: scriptEditorResult.editedCount,
+        candidateCount: run.editedScripts.length,
+        selectionStage: run.editedScripts.length ? (scriptEditorResult.editedCount ? "after_v2_2_edit" : "polished_candidates_after_editor_skip") : "rough_fallback",
+      };
+    }
+    judgeResult = await judgeScripts({ scripts: scriptsForJudging, evidence: run.evidence, keyInfo, options, warnings: run.warnings });
     polishedSelectedScript = polishScriptForShorts(judgeResult.selected, run.warnings);
   }
   let scriptGateV2 = null;
   let scriptBlockedV2 = false;
   if (isViral2(options)) {
-    let viralQuality = scoreViral2Script(polishedSelectedScript, run.evidence, run.viralStrategy);
-    const applyLocalHardening = () => {
-      if (customSelectedScript) {
-        viralQuality = scoreViral2Script(polishedSelectedScript, run.evidence, run.viralStrategy);
-        return;
-      }
-      const hardened = hardenViralOpening(polishedSelectedScript, run.evidence, run.viralStrategy, run.warnings);
-      polishedSelectedScript = hardened.script;
-      viralQuality = hardened.quality;
-      const promiseRepaired = repairScriptPromiseContract(polishedSelectedScript, run.evidence, run.viralStrategy, run.warnings);
-      if (promiseRepaired.changed) {
-        polishedSelectedScript = promiseRepaired.script;
-        viralQuality = scoreViral2Script(polishedSelectedScript, run.evidence, run.viralStrategy);
-      }
-    };
-    applyLocalHardening();
-    scriptGateV2 = isQualityV2
-      ? scoreScriptGateV2({
-          script: polishedSelectedScript,
-          evidence: run.evidence,
-          viralStrategy: run.viralStrategy,
-          memory: run.memory,
-          options,
-        })
-      : null;
-
-    const maxScriptRetries = isQualityV2 ? options.maxScriptRetries : 1;
-    let scriptAttempt = 0;
-    while (
-      !customSelectedScript &&
-      keyInfo?.apiKey &&
-      !options.offline &&
-      scriptAttempt < maxScriptRetries &&
-      (isQualityV2 ? !scriptGateV2?.pass : viralQuality.decision !== "publish_candidate")
-    ) {
-      scriptAttempt += 1;
-      if (isQualityV2) {
-        setV2Status(run, "script_retrying", { attempt: scriptAttempt });
-        addRetryLog(run, "script", scriptAttempt, scriptGateV2);
-        await writeQualityV2Sidecars(run);
-        await saveRun(run);
-      }
-      const currentScript = polishedSelectedScript;
-      const currentQuality = viralQuality;
-      const currentV2Gate = scriptGateV2;
-      const issueHints = isQualityV2
-        ? [...(scriptGateV2?.hardFails || []), ...(scriptGateV2?.issues || [])]
-        : [...(viralQuality.hardFails || []), ...(viralQuality.issues || [])];
-      const revised = await reviseViral2Script({
-        script: polishedSelectedScript,
-        evidence: run.evidence,
-        viralStrategy: run.viralStrategy,
-        keyInfo,
-        warnings: run.warnings,
-        qualityIssues: issueHints,
-        forbiddenPhrases: scriptGateV2?.forbiddenRecent || [],
-        retryAttempt: scriptAttempt,
-      });
-      if (!revised?.text) {
-        polishedSelectedScript = currentScript;
-        viralQuality = currentQuality;
-        scriptGateV2 = currentV2Gate;
-        break;
-      }
-      let revisedScript = polishScriptForShorts(sanitizeScriptAgainstEvidence(revised, run.evidence, run.warnings), run.warnings);
-      const hardened = hardenViralOpening(revisedScript, run.evidence, run.viralStrategy, run.warnings);
-      revisedScript = hardened.script;
-      let revisedQuality = hardened.quality;
-      const promiseRepaired = repairScriptPromiseContract(revisedScript, run.evidence, run.viralStrategy, run.warnings);
-      if (promiseRepaired.changed) {
-        revisedScript = promiseRepaired.script;
-        revisedQuality = scoreViral2Script(revisedScript, run.evidence, run.viralStrategy);
-      }
-      const revisedV2Gate = isQualityV2
-        ? scoreScriptGateV2({
-            script: revisedScript,
-            evidence: run.evidence,
-            viralStrategy: run.viralStrategy,
-            memory: run.memory,
-            options,
-          })
-        : null;
-      const acceptRevision = isQualityV2
-        ? Number(revisedV2Gate?.total || 0) >= Number(scriptGateV2?.total || 0) || (scriptGateV2?.hardFails || []).length > 0
-        : revisedQuality.total >= viralQuality.total || viralQuality.hardFails.length;
-      if (acceptRevision) {
-        polishedSelectedScript = revisedScript;
-        viralQuality = revisedQuality;
-        scriptGateV2 = revisedV2Gate;
-        run.warnings.push(isQualityV2 ? `V2 script gate revised the selected script before TTS (attempt ${scriptAttempt}).` : "Viral 2.0 gate revised the selected script before TTS.");
-      } else {
-        polishedSelectedScript = currentScript;
-        viralQuality = currentQuality;
-        scriptGateV2 = currentV2Gate;
-        break;
-      }
-    }
-
+    const viralQuality = scoreViral2Script(polishedSelectedScript, run.evidence, run.viralStrategy);
     if (isQualityV2) {
-      scriptGateV2 ||= scoreScriptGateV2({
+      scriptGateV2 = scoreScriptGateV2({
         script: polishedSelectedScript,
         evidence: run.evidence,
         viralStrategy: run.viralStrategy,
@@ -448,6 +374,7 @@ async function generateWorldCupRun(input = {}) {
       selectedStyleId: polishedSelectedScript.styleId,
       quality: viralQuality,
       qualityV2: scriptGateV2,
+      editor: run.viralStrategy.scriptEditor || null,
     };
   }
   run.selectedScript = {
@@ -483,7 +410,22 @@ async function generateWorldCupRun(input = {}) {
   run.files.script = await writeRunFile(
     run,
     "script.json",
-    `${JSON.stringify({ scripts: run.scripts, selectedScript: run.selectedScript }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        scripts: run.scripts,
+        editedScripts: run.editedScripts || [],
+        selection: {
+          strategy: isViral2(options) ? "v2_2_edit_all_then_judge" : "rough_candidates_then_judge",
+          customScript: Boolean(customSelectedScript),
+          editor: run.viralStrategy?.scriptEditor || null,
+          judgeModel: run.selectedScript.judge?.model || "",
+          selectedStyleId: run.selectedScript.styleId,
+        },
+        selectedScript: run.selectedScript,
+      },
+      null,
+      2,
+    )}\n`,
     "utf8",
   );
   run.status = "script_ready";

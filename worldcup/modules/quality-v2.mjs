@@ -90,37 +90,56 @@ export function scoreScriptGateV2({ script, evidence, viralStrategy, memory, opt
   const firstThree = scoreFirstThreeSecondHook(text, evidence);
   const forbiddenRecent = recentForbiddenPhrases(memory);
   const issues = [];
-  const hardFails = [...(base.hardFails || [])];
+  const hardFails = [];
+  const baseHardFails = Array.isArray(base.hardFails) ? base.hardFails.map(cleanText).filter(Boolean) : [];
+  const threshold = Number(options.scriptPublishScore || WORLD_CUP_V2_SCRIPT_PUBLISH_SCORE);
+
+  if (!text) {
+    hardFails.push("Selected script is empty.");
+  }
+  if (words < 45 || words > 140) {
+    hardFails.push(`Spoken length is outside practical TTS range 45-140 words; current length is ${words}.`);
+  } else if (words < 75 || words > 115) {
+    issues.push(`Spoken length is outside target range 75-115 words; current length is ${words}.`);
+  }
+  if (baseHardFails.some((issue) => /hard stat appears without a trusted sourced claim/i.test(issue))) {
+    hardFails.push("Unsupported hard stat appears without a trusted sourced claim.");
+  }
+  if (/\b(?:all rights reserved|read more|click here|subscribe now|follow live updates|minute-by-minute|return json|evidence pack|sourcedclaims)\b/i.test(text) || /\bhttps?:\/\//i.test(text)) {
+    hardFails.push("Script contains copied/source-like text or prompt artifact.");
+  }
 
   if (base.decision !== "publish_candidate") {
-    issues.push(`Viral 2.0 base gate returned ${base.decision}.`);
+    issues.push(`Viral 2.0 diagnostic score returned ${base.decision}; this is not a script-stage block unless safety fails exist.`);
   }
-  if (Number(base.total || 0) < Number(options.scriptPublishScore || WORLD_CUP_V2_SCRIPT_PUBLISH_SCORE)) {
-    issues.push(`Script score ${Number(base.total || 0).toFixed(0)} is below V2 publish score ${options.scriptPublishScore || WORLD_CUP_V2_SCRIPT_PUBLISH_SCORE}.`);
+  if (Number(base.total || 0) < threshold) {
+    issues.push(`Script diagnostic score ${Number(base.total || 0).toFixed(0)} is below former V2 publish score ${threshold}; continuing because script-stage score is diagnostic-only.`);
   }
   if (!hasViralContradiction(opening) || firstThree.decision !== "pass") {
-    hardFails.push("First sentence does not create opinion, contradiction, risk, or curiosity in the first 1-3 seconds.");
-  }
-  if (words < 75 || words > 115) {
-    hardFails.push(`Spoken length must be 75-115 words; current length is ${words}.`);
+    issues.push("First sentence may be weaker than the old first-3-second diagnostic target.");
   }
   for (const phrase of forbiddenRecent) {
     if (lower.includes(phrase)) {
-      hardFails.push(`Recent overused phrase repeated: "${phrase}".`);
+      issues.push(`Recent overused phrase repeated: "${phrase}".`);
+    }
+  }
+  for (const issue of baseHardFails) {
+    if (!/hard stat appears without a trusted sourced claim/i.test(issue)) {
+      issues.push(`Base diagnostic: ${issue}`);
     }
   }
 
   const uniqueHardFails = [...new Set(hardFails.map(cleanText).filter(Boolean))];
   const scorePenalty = uniqueHardFails.length * 4 + Math.max(0, issues.length - 1) * 2;
   const total = Math.max(0, Math.min(100, Number(base.total || 0) - scorePenalty));
-  const threshold = Number(options.scriptPublishScore || WORLD_CUP_V2_SCRIPT_PUBLISH_SCORE);
-  const pass = total >= threshold && uniqueHardFails.length === 0 && base.decision === "publish_candidate";
+  const pass = uniqueHardFails.length === 0;
   return {
     version: "script-v2",
     pass,
     total,
     threshold,
-    decision: pass ? "publish_candidate" : "revise",
+    thresholdIsBlocking: false,
+    decision: pass ? "publish_candidate" : "safety_blocked",
     opening,
     words,
     issues,

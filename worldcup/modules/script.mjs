@@ -415,18 +415,30 @@ export function hasViralContradiction(text) {
 }
 
 export function hasMemorableFootballLine(text) {
-  return /\b(group chat|comment section|panic button|football court|football jail|receipts|cooked|career mode|aura|fraud watch|chaos|rent is due|trap game|pressure cooker|spreadsheet|restart button|playing the noise|crowd a trap|home advantage is cute|filthy|main character|cheat code|check-engine light|fireworks display|on fire|holding their breath|absolutely dominated|what a start|baby|absolute scenes|rewind that|not all sunshine)\b/i.test(cleanText(text));
+  const cleaned = cleanText(text);
+  if (/\b(group chat|comment section|panic button|football court|football jail|receipts|cooked|career mode|aura|fraud watch|chaos|rent is due|trap game|pressure cooker|spreadsheet|restart button|playing the noise|crowd a trap|home advantage is cute|filthy|main character|cheat code|check-engine light|fireworks display|on fire|holding their breath|absolutely dominated|what a start|baby|absolute scenes|rewind that|not all sunshine)\b/i.test(cleaned)) {
+    return true;
+  }
+  return splitScriptSentences(cleaned).some((sentence) => {
+    const compact = cleanText(sentence);
+    return (
+      compact.length >= 35 &&
+      compact.length <= 150 &&
+      /\b(world cup|football|match|goal|keeper|fullback|midfield|press|counter|transition|crowd|fans|coach|shirt|badge|touch|box|line|bracket|venue|score|tactic)\b/i.test(compact) &&
+      /\b(turns? into|feels? like|writes?|weighs?|audits?|seatbelts?|alarm|movie|tax|trap|receipt|noise|pressure|swing|weather|warning|problem|argument|debate)\b/i.test(compact)
+    );
+  });
 }
 
 export const FOOTBALL_JOKE_LINES = [
-  "Home advantage is cute until your own fans start sounding like the comment section.",
-  "The crowd is an extra man until it opens the group chat.",
-  "This is career mode with no restart button.",
-  "The panic button is already warm.",
-  "Football logic walked in with a spreadsheet and left with a headache.",
-  "The group chat is about to become a courtroom.",
-  "That first bad touch can turn hope into audit mode.",
-  "The vibes are wearing boots, but the receipts are holding the whistle.",
+  "The badge is loud, but the first loose touch is louder.",
+  "A favorite's shirt gets heavy when the counterattack starts breathing.",
+  "That first bad touch can turn confidence into audit mode.",
+  "The midfield can look calm until one turnover starts charging rent.",
+  "World Cup logic wears a suit, then football spills coffee on it.",
+  "The crowd can lift a team, then make the next pass feel twice as heavy.",
+  "One sloppy clearance can turn the whole match into a weather report.",
+  "The tactic looks brave until the winger asks for a footrace.",
 ];
 
 export function footballJokeLine(seed = "") {
@@ -535,11 +547,11 @@ export function localViralHookLab({ evidence, options, topicScore }) {
     : /host nation|host nations|home|host/i.test(topicText) && /pressure/i.test(topicText)
       ? `Everyone talks about host-nation advantage. I think one host is carrying the loudest pressure.`
     : /chaos|upset|trap/i.test(topicText)
-      ? `Everyone wants a clean World Cup favorite. I think the chaos team is hiding in plain sight.`
+      ? `Everyone wants a clean World Cup favorite. I think the underdog is carrying the sharper problem.`
       : /fraud|aura/i.test(topicText)
         ? `Everyone is arguing aura. I think the receipts are about to be much funnier.`
         : /midfield|press/i.test(topicText)
-          ? `Everyone watches the stars. I think the midfield panic decides the whole story.`
+          ? `Everyone watches the stars. I think the midfield pressure decides the whole story.`
           : `Everyone thinks ${label} is about the obvious favorite. I think the real danger is pressure.`;
   const contradiction = isUsa
     ? `Everyone thinks home advantage helps ${pressureTarget}. I think it might break them.`
@@ -549,14 +561,14 @@ export function localViralHookLab({ evidence, options, topicScore }) {
         `Everyone thinks home advantage helps the USMNT. I think it might break them.`,
         `The USMNT's biggest World Cup danger might not be ${opponent}. It might be playing at home.`,
         `This is the trap nobody wants to admit about the USMNT.`,
-        `Home advantage sounds nice until 70,000 people become the panic button.`,
+        `Home advantage sounds nice until every simple pass weighs twice as much.`,
         `I am going contrarian on the USMNT. The crowd might be the real opponent.`,
       ]
     : [
         contradiction,
         `Everyone thinks ${label} is simple. That is exactly why it feels dangerous.`,
         `The obvious World Cup pick is usually where football sets the trap.`,
-        `This matchup has group-chat chaos written all over it.`,
+        `This matchup has first-mistake energy written all over it.`,
         `The favorite has the better names. The underdog might have the better problem.`,
         `Football logic says one thing. World Cup chaos says check the pressure first.`,
       ];
@@ -566,12 +578,12 @@ export function localViralHookLab({ evidence, options, topicScore }) {
     topicScore,
     oneSentenceContradiction: contradiction,
     hooks,
-    titleIdeas: isUsa ? ["HOME ADVANTAGE TRAP", "USMNT PANIC BUTTON", "THE REAL OPPONENT"] : ["TRAP GAME ALERT", "WORLD CUP CHAOS PICK", "THE FAVORITE PROBLEM"],
+    titleIdeas: isUsa ? ["HOME ADVANTAGE TRAP", "USMNT PRESSURE TEST", "THE REAL OPPONENT"] : ["TRAP GAME ALERT", "WORLD CUP CHAOS PICK", "THE FAVORITE PROBLEM"],
     coverText: isUsa ? "HOME ADVANTAGE TRAP" : "TRAP GAME ALERT",
     captionInstructions: {
       style: "creator-yellow-pop",
       animation: "slide-lift",
-      emphasisWords: ["TRAP", "BREAK", "PANIC", "PRESSURE", "WRONG", "DANGER", "CHAOS", "OPPONENT"],
+      emphasisWords: ["TRAP", "BREAK", "PRESSURE", "WRONG", "DANGER", "CHAOS", "OPPONENT"],
       firstFrameRule: "First caption must be a complete contradiction, readable with sound off in one second.",
     },
     visualStyle: {
@@ -579,7 +591,7 @@ export function localViralHookLab({ evidence, options, topicScore }) {
         "Start with a real team/player/flag proof beat when license-safe, then alternate crowd pressure, tactical cards, close action, and joke overlays. Avoid generic training clips back-to-back.",
       pacing: "Change visual every 2.5 to 5 seconds. Use a graphic interruption on the joke line.",
       beatSearchQueries: isUsa
-        ? ["United States soccer fans stadium", "USMNT flag supporters", "soccer crowd pressure", "football tactical board panic"]
+        ? ["United States soccer fans stadium", "USMNT flag supporters", "soccer crowd pressure", "football tactical board pressure"]
         : ["soccer fans pressure stadium", "world cup football crowd", "football tactical board vertical", "soccer match tension"],
     },
     editPlan: [
@@ -1239,47 +1251,48 @@ export function fallbackScripts(evidence, viralStrategy = null) {
   if (viralStrategy?.version === "viral2") {
     const contradiction = cleanText(viralStrategy.oneSentenceContradiction) || `Everyone thinks ${matchName} is simple. I think the pressure says otherwise.`;
     const coverText = cleanText(viralStrategy.coverText) || "TRAP GAME ALERT";
-    const firstJoke = footballJokeLine(`${matchName}:contrarian`);
-    const softJoke = footballJokeLine(`${matchName}:soft`);
+    const seriousLine = `${matchName} is not a badge contest; it is a first-mistake audit.`;
+    const funnyLine = `If ${matchName} turns into transition traffic, somebody needs a seatbelt.`;
+    const dramaticLine = `The favorite's shirt gets heavy when the first counterattack starts breathing.`;
     return [
       {
-        styleId: "viral2_contrarian_friend",
+        styleId: "serious_analyst",
         title: coverText,
         hookType: "contradiction",
-        text: `${contradiction} Because the useful clue is not the bigger badge. It is who plays normal football when the noise gets stupid. ${firstJoke} My pick is the team that can stay boring for five minutes longer. Am I overthinking this, or is pressure the real opponent?`,
+        text: `${contradiction} The useful clue is not the bigger badge. It is who plays normal football when the noise gets loud. ${seriousLine} My pick is the team that can stay boring for five minutes longer. Am I overthinking this, or is pressure the real opponent?`,
         dataPoint,
         opinion: "Pressure can matter more than reputation in the first World Cup beat.",
-        joke: firstJoke,
-        memorableLine: firstJoke,
+        joke: "first-mistake audit",
+        memorableLine: seriousLine,
         commentTrigger: "Am I overthinking this, or is pressure the real opponent?",
         coverText,
-        visualMoments: ["first-frame contradiction", "crowd pressure", "tactical panic card", "comment courtroom gag"],
+        visualMoments: ["first-frame contradiction", "crowd pressure", "first-mistake audit card", "comment debate card"],
       },
       {
-        styleId: "viral2_funny_fan",
+        styleId: "funny_fan_analyst",
         title: viralStrategy.titleIdeas?.[1] || coverText,
         hookType: "fan_debate",
-        text: `${contradiction} The scary part is simple: World Cup games do not forgive main-character football. The crowd is an extra man until it opens the group chat. Then the whole plan turns into career mode with no restart button. So I am not watching the hype. I am watching the first panic touch. Tell me, is this a smart take or am I already in football jail?`,
+        text: `${contradiction} The funny part is simple: World Cup games do not forgive teams that get too cute. ${funnyLine} So I am not watching the badge. I am watching the first rushed pass. Tell me, is this a smart read or am I making the match too dramatic?`,
         dataPoint,
         opinion: "The first signs of panic matter more than the pre-match hype.",
-        joke: "career mode with no restart button",
-        memorableLine: "The crowd is an extra man until it opens the group chat.",
-        commentTrigger: "Is this a smart take or am I already in football jail?",
+        joke: "transition traffic needs a seatbelt",
+        memorableLine: funnyLine,
+        commentTrigger: "Is this a smart read or am I making the match too dramatic?",
         coverText,
-        visualMoments: ["team proof beat", "career mode gag card", "panic touch close-up", "football jail comment card"],
+        visualMoments: ["team proof beat", "transition traffic graphic", "rushed pass close-up", "comment debate card"],
       },
       {
-        styleId: "viral2_soft_analyst",
+        styleId: "dramatic_storyteller",
         title: viralStrategy.titleIdeas?.[2] || coverText,
         hookType: "risk",
-        text: `${contradiction} That does not mean they are bad. It means the first ugly spell matters. Crowds can lift you, but they can also make every simple pass feel like a referendum. ${softJoke} If this goes wrong, the opponent may not beat them first. The moment might. Agree or am I too cynical?`,
+        text: `${contradiction} That does not mean the favorite is weak. It means the first ugly spell matters. Crowds can lift you, but they can also make every simple pass feel twice as heavy. ${dramaticLine} Does the better team control the moment, or does the moment control them?`,
         dataPoint,
         opinion: "The risk is emotional speed, not talent.",
-        joke: "every simple pass feels like a referendum",
-        memorableLine: softJoke,
-        commentTrigger: "Agree or am I too cynical?",
+        joke: "every simple pass feels twice as heavy",
+        memorableLine: dramaticLine,
+        commentTrigger: "Does the better team control the moment, or does the moment control them?",
         coverText,
-        visualMoments: ["crowd lift", "simple pass pressure", "noise graphic", "agree/disagree end card"],
+        visualMoments: ["crowd lift", "heavy shirt graphic", "counterattack warning", "two-sided debate card"],
       },
     ];
   }
@@ -1288,21 +1301,23 @@ export function fallbackScripts(evidence, viralStrategy = null) {
       styleId: "serious_analyst",
       title: `${matchName}: the serious pick`,
       hookType: "prediction",
-      text: `I'm going contrarian on ${matchName}. The clue is this: ${dataPoint}. That makes this less about star names and more about who handles the first bad ten minutes. My lean is the team that turns pressure into chances, not panic. If this ages badly, I will accept the football court hearing in the comments.`,
+      text: `${matchName} is less about star names than the first bad ten minutes. The clue is this: ${dataPoint}. My lean is the team that turns pressure into chances, not rushed touches. The badge is loud, but the first loose touch is louder. Tell me which side handles the ugly minutes better.`,
       dataPoint,
       opinion: "The calmer team under pressure has the edge.",
-      joke: "football court hearing in the comments",
-      commentTrigger: "Tell me if this pick is cooked or genius.",
+      joke: "the first loose touch is louder",
+      memorableLine: "The badge is loud, but the first loose touch is louder.",
+      commentTrigger: "Which side handles the ugly minutes better?",
     },
     {
       styleId: "funny_fan_analyst",
       title: `${matchName}: chaos watch`,
       hookType: "controversy",
-      text: `This has trap-game energy written all over it. On paper, it looks simple. In World Cup language, that means someone is about to make the group chat unbearable. The useful clue: ${dataPoint}. So I am watching the midfield like it owes me money. My pick is the team with less panic in possession. If I am wrong, clip this and send me to football jail.`,
+      text: `${matchName} has "do not blink first" energy. On paper, it looks simple. In World Cup language, that means one rushed pass can make the whole couch sit forward. The useful clue: ${dataPoint}. So I am watching the midfield like it borrowed my charger. Who is calmer when the game gets weird?`,
       dataPoint,
       opinion: "This could be closer than the reputation gap suggests.",
-      joke: "the group chat becomes unbearable",
-      commentTrigger: "Who is going to football jail here?",
+      joke: "watching the midfield like it borrowed my charger",
+      memorableLine: "One rushed pass can make the whole couch sit forward.",
+      commentTrigger: "Who is calmer when the game gets weird?",
     },
     {
       styleId: "dramatic_storyteller",
@@ -1312,6 +1327,7 @@ export function fallbackScripts(evidence, viralStrategy = null) {
       dataPoint,
       opinion: "The game may be decided by one pressure moment.",
       joke: "football loves receipts",
+      memorableLine: "One mistake, one counterattack, one keeper moment, and the whole story flips.",
       commentTrigger: "What is the one moment you think decides it?",
     },
   ];
@@ -1409,36 +1425,25 @@ export async function generateScripts(evidence, keyInfo, options, warnings) {
   const viralRules = viralMode
     ? `
 VIRAL 2.0 MODE:
-- This run is a comparison against the classic pipeline. Keep the classic pipeline's softer, funnier creator tone, but make the hook and structure cleaner.
+- Keep the creator tone fast, smart, funny when natural, and evidence-led. Do not copy any old house style.
 - Topic score decision: ${viralStrategy.topicScore?.decision || "unknown"} (${viralStrategy.topicScore?.total ?? "n/a"}/100).
 - One-sentence contradiction to preserve or improve: "${viralStrategy.oneSentenceContradiction || "none"}"
-- Hook lab. Use one of these or beat them:
+- Hook lab for strategic context only. Do not copy wording unless it is genuinely the best evidence-safe opener:
 ${(viralStrategy.hooks || []).map((hook, index) => `  ${index + 1}. ${hook}`).join("\n") || "  none"}
 - Cover text ideas: ${(viralStrategy.titleIdeas || []).join(" | ") || viralStrategy.coverText || "none"}
 - Edit plan:
 ${(viralStrategy.editPlan || []).map((step) => `  - ${step}`).join("\n") || "  - fast contradiction, receipt, joke, opinion, comment trigger"}
-- The first sentence must be a complete contradiction or hard opinion. It cannot be a sentence fragment.
-- The first 12-16 spoken words must include a recognizable team/player/topic, a pressure word, and a curiosity gap. No slow preamble.
-- Never open with a soft question like "Is the USMNT ready..." or "Can they handle..." Start with a direct claim.
-- Preferred hook shape: "Germany just gave Paraguay the blueprint, and that should terrify the USMNT."
-- For post-match videos, prefer a creator recap hook over abstract analysis: result + star/moment + tension in one breath.
-- Good post-match hook shape: "WHAT A START! The USMNT just smashed Paraguay 4-1, but Pulisic's calf is the warning."
-- Bad abstract opener to avoid forever: "The World Cup take everyone likes is hiding the part fans will argue about."
-- Post-match scripts may include 2 to 4 bracketed edit cues inside the spoken script, like [SHOW HIGHLIGHT: BALOGUN CELEBRATION], [SHOW HIGHLIGHT: REYNA GOAL], or [SHOW HIGHLIGHT: PULISIC LIMPS OFF]. These cues help visuals and must be mirrored in visualMoments.
-- Include exactly one memorable football-native line that could become a comment quote.
-- Every post-match script MUST include all three creator-punch ingredients:
-  1. one hype phrase: "on fire", "FILTHY", "absolutely dominated", "what a start", "absolute scenes", or a fresh equivalent.
-  2. one emotional phrase: "fans holding their breath", "the mood changed", "not all sunshine", "the stadium went quiet", or a fresh equivalent.
-  3. one casual fan reaction: "baby", "be honest", "I am sweating", "tell me I am overreacting", "are we panicking yet?", or a fresh equivalent.
+- The first sentence must be complete, specific to this story, and create pressure, debate, contradiction, or consequence.
+- The first 12-16 spoken words should include a recognizable team/player/topic and make viewers ask "why?" No slow preamble.
+- For postmatch videos, open with result, named player, key moment, injury, controversy, or match swing when evidence supports it.
+- Postmatch scripts may include 2 to 4 bracketed edit cues inside the spoken script only when supported by evidence. Mirror them in visualMoments.
+- Include exactly one fresh football-native line created from this specific team, player, coach, score, venue, tactic, or controversy.
+- Every postmatch script should include creator energy, emotional stakes, and casual fan reaction, but use fresh language that fits the match.
 - Include 3 to 5 visual moments as plain phrases.
 - Reject yourself if the script could fit any sport after replacing team names.
-- Prefer concrete fan language over abstract tactical poetry.
-- Prefer playful anxiety over doom. The voice should feel like a smart friend joking through nerves.
-- Use Classic-style lines like "panic button", "career mode with no restart button", "group chat courtroom", "souffle during an earthquake", or "football court hearing".
-- Creator line lab. Every script MUST contain one fresh line with this level of casual fan truth. Do not repeat a line from recent memory:
-  "Home advantage is cute until your own fans start sounding like the comment section."
-  You may adapt it to the topic, but it must be short, funny, and instantly quotable.
-- Do not use harsh pundit phrases like "national humiliation", "psychological death trap", "sucker's bet", "delusional", "glass cannon", "destined to break", "crushed", "failure", "disaster", "meltdown", "collapse", "choke", "fold", or "crisis".
+- Prefer concrete fan language over abstract tactical poetry. The voice should feel like a smart friend joking through nerves.
+- Do not reuse familiar house phrases from recent videos. Invent the line from the evidence in front of you.
+- Dramatic or harsh words are allowed only when fair, non-abusive, and supported by the story; do not turn the script into angry pundit energy.
 - End with a debate question that has two natural sides.
 `
     : "";
@@ -1460,9 +1465,7 @@ Video target:
 - Structure: 0-2s hook, 2-7s funny promise, 7-18s one data/pressure clue, 18-32s fan-story + joke, 32-45s soft punchline/comment trigger
 - First sentence must be the actual scroll-stopping claim. Do not begin with "I'm going contrarian", "hot take", "here's why", or a setup phrase.
 - If this is postmatch, start like a creator reacting to the match result, not a neutral preview. Use final score, named player, key goal/injury/turning point, or emotional shock immediately.
-- Postmatch opening formula: "WHAT A START!" or "That got real fast!" + team/result + "but/so" tension. Example: "WHAT A START! The USMNT just smashed Paraguay 4-1, but Pulisic's calf is the warning."
-- A good postmatch script should feel close to this shape without copying facts unless evidence supports them:
-  "WHAT A START! The USMNT just smashed Paraguay 4-1, and this did not feel like a lucky opener. [SHOW HIGHLIGHT: BALOGUN CELEBRATION] Balogun looked ruthless, Reyna gave the game its 'wait, rewind that' moment, and then the mood changed when Pulisic came off. [SHOW HIGHLIGHT: PULISIC LIMPS OFF] So yes, the win is loud. But the real question is scarier: did the USMNT announce themselves, or did Paraguay make them look too comfortable?"
+- Postmatch opening shape: team/result/key moment first, then a "but" or "so" tension. Use only facts in evidence.
 - Prefer direct hooks like "Home advantage might actually destroy the USMNT" over meta hooks like "I'm going contrarian."
 - First 3-second gate: the first 12-16 spoken words must name the target, create pressure/debate, and make viewers ask "why?"
 - Do not start with a question. For Shorts, claim first and ask later.
@@ -1470,33 +1473,21 @@ Video target:
 - If the chosen topic/title/cover promises a numbered list such as "3 paths", "4 reasons", or "2 scenarios", the spoken script must clearly label and deliver every item. Do not use a list hook unless the list appears in the script.
 
 Required in every script:
-- a 1 to 2 second hook from one of these proven patterns:
-  Urgency: "In 47 hours, this team's entire World Cup could end. Here's why."
-  Mystery: "One stat that nobody's talking about... and it changes EVERYTHING."
-  Controversy: "The ref is TERRIFIED of this matchup. Here's why."
-  Prediction: "I'm going contrarian. Here's my hot take."
-  Story: "This player has been waiting 8 years for this moment."
-  Data shock: "This stat will BREAK your prediction."
-  Risk: "Vegas got this WRONG. Here's the real play."
+- a 1 to 2 second hook built from one concrete angle: urgency, mystery, controversy, prediction, story, data shock, or risk
 - one real evidence-backed data point if trusted evidence exists
 - one clear opinion
 - one football-native joke or metaphor that sounds like a fan talking, not a writer showing off
-- one hype phrase, one emotional phrase, and one casual fan reaction in the actual script. This is mandatory for postmatch recaps.
-- one creator-native quote line in the actual script, similar in quality to:
-  "Home advantage is cute until your own fans start sounding like the comment section."
-  "The crowd is an extra man until it opens the group chat."
-  "This is career mode with no restart button."
-  "The panic button is already warm."
-  "The group chat is about to become a courtroom."
+- for postmatch recaps, one energetic reaction, one emotional beat, and one casual fan reaction in fresh words
+- one original creator-native quote line built from this specific topic, not a reusable phrase
 - one ending that makes comments likely
 - a human voice rhythm: short sentences, natural contractions, question beats, and room for pitch changes
 - one first-frame cover text idea in the title or hook language, such as "HOME ADVANTAGE TRAP" or "USMNT PANIC MODE"
 - For postmatch: include 2 to 4 bracketed visual cues directly in text only when the evidence supports the moment, for example [SHOW HIGHLIGHT: BALOGUN CELEBRATION]. Do not invent a highlight that is not in evidence.
-- For postmatch: the script should feel more like "Gio Reyna? FILTHY!" than "tactical pressure was efficient." Use simple creator reactions before analysis.
+- For postmatch: use simple creator reactions before analysis when the evidence supports a big moment.
 - The three scripts must be genuinely different:
-  serious_analyst = hype recap with receipts
-  funny_fan_analyst = fan-chaos recap with one clean joke
-  dramatic_storyteller = tension/what-it-means recap centered on the biggest emotional swing
+  serious_analyst = sharp, evidence-led, opinionated, least jokey
+  funny_fan_analyst = fast, fan-native, playful, one clean joke
+  dramatic_storyteller = emotional and cinematic, centered on stakes or the biggest swing
 
 Avoid:
 - generic openings like "The 2026 World Cup is coming"
@@ -1506,11 +1497,11 @@ Avoid:
 - poetic lines that need too much decoding; keep them sharp and mobile-friendly
 - more than one hard stat
 - phrases like "absolute failure", "funeral march", "silent killer" unless the style is explicitly dramatic
-- harsh doom language like "national humiliation", "death trap", "sucker's bet", "delusional", "glass cannon", "destined to break", "crushed", "failure", "disaster", "meltdown", "collapse", "choke", "fold", or "crisis"
+- abusive or unfair doom language; dramatic words are okay when accurate, fair, and tied to evidence
 - fake certainty
 - copied commentary wording
 - bland ESPN preview tone
-- abstract opener: "The World Cup take everyone likes is hiding the part fans will argue about."
+- reusable abstract openers that could fit any topic
 - random player claims not in evidence
 - overused "you won't believe" hooks
 - hard numbers unless they appear in sourcedClaims with sourceUrl and confidence >= 0.6
@@ -1584,6 +1575,129 @@ Return JSON:
     warnings.push(`Script writer fallback used: ${error.message}`);
     return { scripts: fallbackScripts(evidence, options.viralStrategy), model: "local-fallback" };
   }
+}
+
+export async function editScriptsV20({ scripts = [], evidence = {}, keyInfo, options = {}, warnings = [] }) {
+  const baseScripts = (Array.isArray(scripts) ? scripts : [])
+    .map((script) => polishScriptForShorts(sanitizeScriptAgainstEvidence(script, evidence, warnings), warnings))
+    .filter((script) => script.text);
+  if (!baseScripts.length) {
+    warnings.push("V2 2.0 editor received no script candidates.");
+    return { scripts: [], model: "none", version: "v2.2-originality-first", editedCount: 0 };
+  }
+  if (!keyInfo?.apiKey || options.offline) {
+    warnings.push("V2 2.0 editor skipped live rewrite; using polished rough candidates.");
+    return {
+      scripts: baseScripts.map((script) => ({
+        ...script,
+        revisedBy: script.revisedBy ? `${script.revisedBy}+v2_2_offline_skip` : "v2_2_offline_skip",
+      })),
+      model: "local-fallback",
+      version: "v2.2-originality-first",
+      editedCount: 0,
+    };
+  }
+
+  const memory = await loadWorldCupMemory({ excludeId: options.id, limit: 10 });
+  const promptBase = `
+You are the originality-first script doctor for "World Cup Chaos Desk".
+Rewrite each script into a publishable short-form football script without copying the old Viral/V2 house style.
+
+Core job:
+- Keep the pace fast and energetic as it is.
+- Preserve the original script's best angle, not a generic viral template.
+- Use ONLY claims supported by the evidence. If a claim is uncertain, phrase it as a cautious pressure read.
+- 75-115 spoken words.
+- Start with one complete first sentence that names the team/player/topic and creates pressure, contradiction, or debate.
+- Make the first sentence specific to THIS story. Do not use reusable abstract openers.
+- Include one original football-native line created from the specific teams, players, score, coach, venue, tactic, or controversy.
+- Include one clear opinion and one natural debate question.
+- Keep the tone smart, conversational, funny, and slightly nervous. Avoid angry pundit energy.
+- Strong or dramatic words are allowed when they are fair, evidence-safe, and useful for retention.
+
+Preserve the script lane:
+- serious_analyst stays sharp and evidence-led
+- funny_fan_analyst stays fast, fan-native, and playful
+- dramatic_storyteller stays emotional and cinematic
+- Do not make all three scripts sound alike.
+
+Freshness rules:
+- Do not copy or lightly paraphrase recent hooks, memorable lines, or old house phrases.
+- Do not start with "The World Cup..." unless the topic is literally about the whole tournament.
+- Avoid generic hype words unless attached to a concrete match fact.
+
+Recent memory to avoid copying:
+${memoryPrompt(memory)}
+
+Evidence:
+${JSON.stringify(evidence, null, 2)}
+`.trim();
+
+  const edited = [];
+  for (const script of baseScripts) {
+    const prompt = `
+${promptBase}
+
+Original script lane: ${cleanText(script.styleId)}
+Original script:
+${JSON.stringify(script, null, 2)}
+
+Return JSON:
+{
+  "title": "",
+  "text": "",
+  "dataPoint": "",
+  "opinion": "",
+  "joke": "",
+  "memorableLine": "",
+  "commentTrigger": "",
+  "coverText": "",
+  "visualMoments": [""],
+  "factualClaims": [""],
+  "riskNotes": [""],
+  "revisionNotes": [""]
+}
+`.trim();
+    try {
+      const result = await requestGeminiJson({ keyInfo, model: WRITER_MODEL, prompt, temperature: 0.9 });
+      const revised = {
+        ...script,
+        styleId: cleanText(script.styleId),
+        title: cleanText(result.json.title || script.title),
+        text: cleanText(result.json.text || script.text),
+        dataPoint: cleanText(result.json.dataPoint || script.dataPoint),
+        opinion: cleanText(result.json.opinion || script.opinion),
+        joke: cleanText(result.json.joke || script.joke),
+        memorableLine: cleanText(result.json.memorableLine || script.memorableLine),
+        commentTrigger: cleanText(result.json.commentTrigger || script.commentTrigger),
+        coverText: cleanText(result.json.coverText || script.coverText),
+        visualMoments: Array.isArray(result.json.visualMoments) ? result.json.visualMoments.map(cleanText).filter(Boolean).slice(0, 6) : script.visualMoments || [],
+        factualClaims: Array.isArray(result.json.factualClaims) ? result.json.factualClaims.map(cleanText).filter(Boolean) : script.factualClaims || [],
+        riskNotes: [
+          ...(Array.isArray(script.riskNotes) ? script.riskNotes.map(cleanText).filter(Boolean) : []),
+          ...(Array.isArray(result.json.riskNotes) ? result.json.riskNotes.map(cleanText).filter(Boolean) : []),
+        ].slice(0, 8),
+        revisionNotes: Array.isArray(result.json.revisionNotes) ? result.json.revisionNotes.map(cleanText).filter(Boolean) : [],
+        sourceStyleId: cleanText(script.styleId),
+        revisedBy: script.revisedBy ? `${script.revisedBy}+v2_2_editor` : "v2_2_editor",
+      };
+      edited.push(polishScriptForShorts(sanitizeScriptAgainstEvidence(revised, evidence, warnings), warnings));
+    } catch (error) {
+      warnings.push(`V2 2.0 editor kept ${script.styleId || "candidate"} rough script: ${error.message}`);
+      edited.push({
+        ...script,
+        revisedBy: script.revisedBy ? `${script.revisedBy}+v2_2_error_fallback` : "v2_2_error_fallback",
+        revisionNotes: [...(Array.isArray(script.revisionNotes) ? script.revisionNotes : []), `V2 2.0 edit failed: ${error.message}`],
+      });
+    }
+  }
+
+  return {
+    scripts: edited.filter((script) => script.text).slice(0, baseScripts.length),
+    model: WRITER_MODEL,
+    version: "v2.2-originality-first",
+    editedCount: edited.filter((script) => /v2_2_editor/i.test(script.revisedBy || "")).length,
+  };
 }
 
 export function heuristicScriptScore(script) {
@@ -2051,22 +2165,36 @@ export async function judgeScripts({ scripts, evidence, keyInfo, options, warnin
     };
   }
   const prompt = `
-You are a strict short-form football editor.
-Judge these three World Cup scripts for factual support, hook strength, humor authenticity, shareability, retention, comment potential, TTS naturalness, and copyright/unsupported-claim risk.
-Penalize any hard number, ranking, injury, odds, or recent-form claim that is not clearly supported by evidence.sourcedClaims with a sourceUrl.
-Reward scripts that use urgent, mysterious, controversial, contrarian, story, data-shock, or risk hooks without becoming clickbait misinformation.
-Strongly prefer scripts that feel like a funny, soft, natural football creator, not a TV analyst.
-For postmatch scripts, strongly reward creator-recap openings that use the result, named player, or key turning point immediately, then add a "but/so" tension.
-For postmatch scripts, reward 2-4 supported bracketed visual cues such as [SHOW HIGHLIGHT: PLAYER CELEBRATION] when they match evidence and visualMoments.
-Strongly penalize abstract openers like "The World Cup take everyone likes is hiding the part fans will argue about."
-Prefer 80-115 spoken words. Penalize scripts over 125 words unless they are exceptional.
-Penalize heavy negative phrases like "absolute failure", "funeral march", "silent killer", "crumble", "disaster", "meltdown", "collapse", "choke", "fold", or "crisis" when a softer funny version could work.
-Reward pitch-friendly writing: short sentences, playful questions, pauses before punchlines, and one memorable joke.
-Strongly penalize scripts that do not contain one quotable creator/fan line like:
-- "Home advantage is cute until your own fans start sounding like the comment section."
-- "The crowd is an extra man until it opens the group chat."
-- "The panic button is already warm."
-- "The group chat is about to become a courtroom."
+You are an open-minded short-form football editor judging scripts for YouTube Shorts, Instagram Reels, and TikTok-style feeds.
+Judge each script by how well it serves this exact topic, evidence pack, audience, and platform. Do not reward a fixed house style.
+
+Core scoring priorities:
+- Factual support: every hard number, ranking, injury, odds, score, lineup, or recent-form claim must be clearly supported by evidence.sourcedClaims with a sourceUrl, or phrased as cautious opinion.
+- Hook strength: the first sentence should quickly name the story and create pressure, curiosity, disagreement, consequence, or emotional stakes. It may be funny, dramatic, analytical, or fan-reactive depending on the topic.
+- Retention and shareability: reward fast movement, clear stakes, one strong turn, and language a football fan might repeat or argue with.
+- Humor authenticity: reward original, topic-specific football language. Do not require jokes if the strongest version is dramatic or analytical.
+- Comment potential: reward a natural debate question with two real sides.
+- TTS naturalness: reward short, speakable sentences, clean breath points, and words that sound natural in a fast creator voice.
+- Platform fit: prefer 75-115 spoken words for Shorts/Reels; penalize over 125 words unless the writing is exceptional and still fast.
+- Risk: penalize copied article phrasing, unsupported certainty, invented highlights, misleading injury/odds/stat claims, and claims that do not match the evidence.
+- Platform momentum: reward scripts that feel scroll-stopping, rewatchable, and easy to follow on a phone without sounding like a generic broadcast recap.
+
+Style guidance:
+- Prefer scripts that feel like a smart football creator talking to fans, not a generic TV analyst.
+- Let each style lane compete fairly: serious_analyst can be sharp and evidence-led, funny_fan_analyst can be playful, and dramatic_storyteller can be cinematic.
+- Do not penalize a script just because it lacks an old template phrase. Reward fresh, topic-specific lines over familiar catchphrases.
+- Penalize repeated or reusable house phrases when they feel copied, including "panic button", "group chat courtroom", "career mode with no restart button", "hiding in plain sight", or other lines that could fit any video.
+- Some harsh or dramatic wording is acceptable when it raises retention and remains fair, evidence-safe, and non-abusive.
+
+Postmatch guidance:
+- Reward openings that use the result, named player, injury/VAR/key turning point, or match swing immediately, then add a "but/so" tension.
+- Reward 2-4 supported bracketed visual cues such as [SHOW HIGHLIGHT: PLAYER CELEBRATION] only when they match evidence and visualMoments.
+- For postmatch recaps, if two scripts have similar evidence safety and factual quality, prefer the one with stronger fan-native creator energy, faster momentum, and more natural comment debate.
+- Do not force the funny lane to win. A serious or dramatic postmatch script should win when it has a sharper supported angle, better retention, clearer emotion, or safer factual handling.
+
+Selection rule:
+- Pick the script with the best publish potential after balancing evidence safety, originality, audience fit, retention, and TTS delivery.
+- The winner does not need to be the funniest script if another script better fits the topic and platform.
 
 Evidence:
 ${JSON.stringify(evidence, null, 2)}
@@ -2114,7 +2242,10 @@ Return JSON:
     candidates.sort((a, b) => (Number(b.totalScore) || 0) - (Number(a.totalScore) || 0));
     let selected = candidates.find((script) => script.styleId === result.json?.winnerStyleId) || candidates[0];
     let revisionUsed = false;
-    if ((selected?.needsRevision || Number(selected?.totalScore || 0) < 48) && keyInfo?.apiKey) {
+    const selectedText = cleanText(selected?.text || "");
+    const selectedUnsupportedHardStat =
+      hasHardStat(`${selectedText} ${selected?.dataPoint || ""}`) && !trustedSourceClaims(evidence).some((claim) => hasHardStat(claim.claim));
+    if ((!selectedText || selectedUnsupportedHardStat) && keyInfo?.apiKey) {
       const revised = await reviseWeakScript({ script: selected, evidence, keyInfo, warnings });
       if (revised?.text) {
         selected = { ...selected, ...revised, revisedFrom: selected.styleId };
@@ -2142,15 +2273,10 @@ Revise this World Cup short script once.
 Keep it factual, fan-native, funny, and easy for TTS.
 Do not add unsupported facts.
 Use a sharper comment-driving hook. Avoid generic openings.
-For postmatch, open like a creator recap with result + player/moment + tension, for example: "WHAT A START! The USMNT just smashed Paraguay 4-1, but Pulisic's calf is the warning."
+For postmatch, open like a creator recap with evidence-backed result + player/moment + tension.
 If supported by evidence, add 2-3 bracketed visual cues in the script and mirror them in visualMoments.
 If evidence is weak, remove hard stats and frame the argument as opinion or pressure-read.
-Never use this abstract opener or a close paraphrase: "The World Cup take everyone likes is hiding the part fans will argue about."
-Keep or add one quotable creator-native line in the actual script, like:
-- "Home advantage is cute until your own fans start sounding like the comment section."
-- "The crowd is an extra man until it opens the group chat."
-- "The panic button is already warm."
-- "The group chat is about to become a courtroom."
+Do not copy an old house phrase. Keep or add one quotable creator-native line that comes from this exact topic.
 
 Evidence:
 ${JSON.stringify(evidence, null, 2)}
@@ -2170,32 +2296,131 @@ Return JSON:
   }
 }
 
+const TTS_DRIFT_STOPWORDS = new Set([
+  "the",
+  "and",
+  "but",
+  "that",
+  "this",
+  "with",
+  "from",
+  "your",
+  "you",
+  "are",
+  "for",
+  "into",
+  "about",
+  "what",
+  "when",
+  "where",
+  "why",
+  "how",
+  "have",
+  "has",
+  "was",
+  "were",
+  "will",
+  "just",
+  "not",
+  "one",
+  "two",
+  "three",
+  "they",
+  "them",
+  "their",
+  "its",
+  "it's",
+  "can",
+  "could",
+  "should",
+  "would",
+]);
+
+function speechWords(text = "") {
+  return stripTagsForSpeech(text)
+    .toLowerCase()
+    .replace(/[^a-z0-9'\s-]/g, " ")
+    .split(/\s+/)
+    .map((word) => word.trim())
+    .filter(Boolean);
+}
+
+function speechKeywordSet(text = "") {
+  return new Set(speechWords(text).filter((word) => word.length > 2 && !TTS_DRIFT_STOPWORDS.has(word)));
+}
+
+function ttsSimilarity(source = "", screenplay = "") {
+  const sourceWords = speechWords(source);
+  const outputWords = speechWords(screenplay);
+  const sourceKeys = speechKeywordSet(source);
+  const outputKeys = speechKeywordSet(screenplay);
+  const overlap = [...sourceKeys].filter((word) => outputKeys.has(word)).length;
+  const keyRatio = sourceKeys.size ? overlap / sourceKeys.size : 1;
+  const lengthRatio = sourceWords.length && outputWords.length ? Math.min(sourceWords.length, outputWords.length) / Math.max(sourceWords.length, outputWords.length) : 0;
+  return { keyRatio, lengthRatio, sourceWords: sourceWords.length, outputWords: outputWords.length };
+}
+
+function ttsVoiceAllowedForScript(requestedVoice = "", selectedScript = {}) {
+  const requested = WORLD_CUP_VOICES.includes(requestedVoice) ? requestedVoice : "Orus";
+  const profile = `${selectedScript.styleId || ""} ${selectedScript.text || ""} ${selectedScript.joke || ""}`.toLowerCase();
+  const clearlyPlayful = /funny|playful|joke|banter|chaos|sweating|overreacting|fan|laugh|filthy|scenes/.test(profile);
+  const firmSerious = /serious|evidence|tactical|risk|pressure|warning|argument|analysis|verdict/.test(profile) && !clearlyPlayful;
+  if (requested === "Puck" && !clearlyPlayful) return "Orus";
+  if (requested === "Kore" && !firmSerious) return "Orus";
+  if (!["Orus", "Puck", "Kore"].includes(requested)) return "Orus";
+  return requested;
+}
+
+function fallbackTtsText(selectedScript = {}) {
+  const text = cleanText(selectedScript.text);
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length <= 108) {
+    return text;
+  }
+  const sentences = splitScriptSentences(text);
+  const commentQuestion =
+    sentences
+      .slice()
+      .reverse()
+      .find((sentence) => /\?/.test(sentence)) || cleanText(selectedScript.commentTrigger);
+  const kept = [];
+  let count = 0;
+  for (const sentence of sentences) {
+    if (commentQuestion && cleanText(sentence) === cleanText(commentQuestion)) {
+      continue;
+    }
+    const sentenceWords = sentence.split(/\s+/).filter(Boolean).length;
+    if (count + sentenceWords > 96) {
+      break;
+    }
+    kept.push(sentence);
+    count += sentenceWords;
+  }
+  const candidate = cleanText([...kept, commentQuestion].filter(Boolean).join(" "));
+  const candidateWords = candidate.split(/\s+/).filter(Boolean);
+  if (candidateWords.length >= 75 && candidateWords.length <= 112) {
+    return candidate;
+  }
+  return cleanText(`${words.slice(0, 96).join(" ")} ${cleanText(selectedScript.commentTrigger || "")}`);
+}
+
 export function fallbackTtsRewrite(selectedScript) {
   const style = selectedScript.styleId || "";
-  const words = cleanText(selectedScript.text).split(/\s+/).filter(Boolean);
-  const shortened =
-    words.length > 118
-      ? `${words.slice(0, 105).join(" ")}... ${cleanText(selectedScript.commentTrigger || "Are you buying this take, or am I overthinking it?")}`
-      : cleanText(selectedScript.text);
-  const voice =
-    style.includes("funny") || /jail|group chat|chaos|cooked|hype|almost|laptop|spreadsheet/i.test(selectedScript.text)
-      ? "Orus"
-      : style.includes("dramatic")
-        ? "Sulafat"
-        : "Orus";
+  const shortened = fallbackTtsText(selectedScript);
+  const voice = ttsVoiceAllowedForScript(style.includes("funny") && /joke|playful|banter|funny|chaos/i.test(selectedScript.text || "") ? "Puck" : style.includes("serious") ? "Kore" : "Orus", selectedScript);
   const mood =
-    style.includes("funny") || voice === "Orus"
-      ? "soft, humorous, curious football friend with natural pitch changes"
-      : style.includes("dramatic")
-        ? "cinematic but grounded"
-        : "warm conversational analyst";
+    voice === "Puck"
+      ? "fast playful football creator, clear and not cartoonish"
+      : voice === "Kore"
+        ? "firm serious football creator with clean pressure"
+        : "energetic conversational football creator with natural pitch changes";
   return {
-    screenplay: `[Hook | curious, quick, slight smile]\n${shortened}\n\n[Outro | warmer, playful question]\nDrop your verdict in the comments.`,
+    screenplay: `[Fast hook | brisk, bright]\n${shortened}\n\n[Tiny pause]\n[Question | quick, inviting]`,
     voice,
     mood,
     model: "local-fallback",
     reasoning: "Voice selected from script style using local fallback rules.",
-    tags: ["Hook", "Outro", mood],
+    tags: ["Fast hook", "Tiny pause", "Question"],
   };
 }
 
@@ -2205,46 +2430,30 @@ export async function rewriteForTts({ selectedScript, evidence, keyInfo, options
   }
   const viralTtsRules = isViral2(options)
     ? `
-Viral 2.0 audio rules:
-- The voice should sound like a soft, funny football creator talking to a friend, not a commentator.
-- First line: quick, bright, confident.
-- Proof beat: slightly lower and slower.
-- Punchline/memorable line: playful lift, tiny smile.
-- Ending question: pitch up naturally, like you genuinely want comments.
-- Avoid whisper starts. Avoid slow cinematic suspense for football explainers.
-- Keep tags visible but light, because the user may edit them.
+V2 2.0 audio rules:
+- Preserve the edited script's angle and lane. Do not smooth every script into the same voice.
+- Make delivery energetic for Shorts/Reels, not slow documentary narration.
 `
     : "";
   const prompt = `
-Rewrite the winning World Cup script into a Gemini TTS-ready screenplay.
+Turn the winning World Cup script into a Gemini TTS-ready performance screenplay.
 
 Rules:
-- Keep the same facts and opinion. Do not add unsupported claims.
-- Keep it natural for short-form audio. No overdramatic whisper starts. No news-anchor delivery.
-- Make the audio feel like a funny football creator talking softly but with excitement.
-- Keep the first spoken line as the actual claim/hook. Do not prepend "I'm going contrarian" or a slow setup.
-- Vary energy: quick first claim, slightly slower proof beat, playful lift on the joke, warmer pitch-up on the ending question.
-- Use performance tags that guide pitch, speed, emotion, and pauses:
-  [Hook | curious, quick, slight smile]
-  [Beat | slower, lower pitch]
-  [Joke | faster, playful lift]
-  [Pause | 0.35s]
-  [Question | warmer, pitch up]
-- Use 4 to 7 tags total. Do not tag every sentence.
-- Shorten if needed to 80-115 spoken words. Never exceed 125 spoken words.
-- Preserve football-fan humor and comment trigger.
-- Preserve the selectedScript.memorableLine exactly or near-exactly. Do not sanitize it into analyst language.
+- Do not meaningfully rewrite the script. Preserve facts, opinion, order, creator voice, memorable line, and debate question.
+- Only adjust punctuation, breath points, very small wording stumbles, and performance tags.
+- Optimize for fast but clear Shorts/Reels delivery for US/Europe football audiences.
+- Aim for energetic conversational pace, roughly 175-205 words-per-minute feel.
+- No slow documentary suspense, no news-anchor cadence, no whisper opening.
+- Preferred spoken length is 90-108 words for energetic audio. If the source is over 110 words, trim filler only; preserve facts, opinion, order, memorable line, and question.
+- Use only 3-5 light tags total, chosen from: [Fast hook | brisk, bright], [Proof beat | clear, forward], [Quick joke | lift], [Tiny pause], [Question | quick, inviting].
+- Do not tag every sentence.
+- Keep 75-115 spoken words when possible. Never exceed 125 spoken words.
+- Preserve football-fan humor and the comment trigger.
 - Select one Gemini voice from: ${WORLD_CUP_VOICES.join(", ")}.
 - Voice logic:
-  default World Cup voice: Orus
-  serious but human: Orus, Kore
-  funny soft creator: Orus, Puck only if very playful
-  chaos pick: Puck, Laomedeia, Fenrir
-  dramatic legacy story: Sulafat, Algieba
-  post-match analysis: Orus, Kore, Sadaltager
-- Prefer Orus unless the script clearly needs a different voice.
-- Avoid choosing Kore for softer humorous scripts because it can sound too stiff.
-- Avoid choosing Puck when the tone should be credible and not cartoonish.
+  prefer Orus for most scripts
+  choose Puck only when the edited script is clearly playful
+  choose Kore only for firmer serious scripts
 ${viralTtsRules}
 
 Winning script:
@@ -2265,21 +2474,28 @@ Return JSON:
   try {
     const result = await requestGeminiJson({ keyInfo, model: TTS_REWRITE_MODEL, prompt, temperature: 0.65 });
     const fallback = fallbackTtsRewrite(selectedScript);
-    let screenplay = cleanText(result.json.screenplay).replace(/\\n/g, "\n") || fallback.screenplay;
+    let screenplay = String(result.json.screenplay || "").replace(/\\n/g, "\n").trim() || fallback.screenplay;
     const spokenWords = stripTagsForSpeech(screenplay).split(/\s+/).filter(Boolean);
-    if (spokenWords.length > 130) {
+    if (spokenWords.length > 125) {
       screenplay = fallback.screenplay;
       warnings.push("TTS rewrite was too long, shortened to fallback performance script.");
     }
+    const drift = ttsSimilarity(selectedScript.text, screenplay);
+    if (drift.keyRatio < 0.58 || drift.lengthRatio < 0.68) {
+      warnings.push(
+        `TTS rewrite drift warning: spoken output may have changed content too much (keyword overlap ${(drift.keyRatio * 100).toFixed(0)}%, length similarity ${(drift.lengthRatio * 100).toFixed(0)}%).`,
+      );
+    }
     const requestedVoice = WORLD_CUP_VOICES.includes(result.json.voice) ? result.json.voice : fallback.voice;
-    const selectedVoice = /funny|soft|playful|curious|hype|contrarian/i.test(`${selectedScript.styleId} ${selectedScript.text} ${result.json.mood}`) && requestedVoice === "Kore" ? "Orus" : requestedVoice;
+    const selectedVoice = ttsVoiceAllowedForScript(requestedVoice, selectedScript);
     return {
       screenplay,
       voice: selectedVoice,
       mood: cleanText(result.json.mood) || fallback.mood,
       reasoning: cleanText(result.json.reasoning),
-      tags: Array.isArray(result.json.tags) ? result.json.tags.map(cleanText).filter(Boolean) : [],
+      tags: Array.isArray(result.json.tags) ? result.json.tags.map(cleanText).filter(Boolean).slice(0, 5) : fallback.tags,
       model: TTS_REWRITE_MODEL,
+      drift,
     };
   } catch (error) {
     warnings.push(`TTS rewrite fallback used: ${error.message}`);
