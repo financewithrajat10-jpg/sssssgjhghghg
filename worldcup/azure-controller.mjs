@@ -23,6 +23,8 @@ const DEFAULT_POSTMATCH_DELAY_MINUTES = 20;
 const DEFAULT_YOUTUBE_SCAN_MAX = 150;
 const DEFAULT_YOUTUBE_SPIKE_INTERVAL_MINUTES = 30;
 const DEFAULT_ANALYZER_MODEL = "gemini-3.1-flash-lite";
+const DEFAULT_SKIP_NOTICE_COOLDOWN_MINUTES = 180;
+const DUPLICATE_GATE_REASON = "duplicate candidate already dispatched";
 const INTENT_ACTIONS = new Set(["dispatch_specific", "discover_and_dispatch", "status", "help", "clarify"]);
 const INTENT_TYPES = new Set(["pre-tournament", "prediction", "postmatch", "breaking-news"]);
 const DEFAULT_VIP_TEAMS = [
@@ -174,6 +176,7 @@ function controllerConfig(args = {}) {
     youtubeSpikeIntervalMinutes: Math.max(1, numberArg(args.youtubeSpikeIntervalMinutes || process.env.WORLD_CUP_YOUTUBE_SPIKE_INTERVAL_MINUTES, DEFAULT_YOUTUBE_SPIKE_INTERVAL_MINUTES)),
     analyzerModel: cleanText(args.analyzerModel || process.env.WORLD_CUP_ANALYZER_MODEL || process.env.WORLD_CUP_SEARCH_MODEL || DEFAULT_ANALYZER_MODEL),
     evergreenFallback: boolArg(args.evergreenFallback ?? process.env.WORLD_CUP_EVERGREEN_FALLBACK, true),
+    skipNoticeCooldownMinutes: Math.max(0, numberArg(args.skipNoticeCooldownMinutes || process.env.WORLD_CUP_CONTROLLER_SKIP_NOTICE_COOLDOWN_MINUTES, DEFAULT_SKIP_NOTICE_COOLDOWN_MINUTES)),
     telegramBotToken: cleanText(process.env.WORLD_CUP_CONTROLLER_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || ""),
     telegramChatId: cleanText(process.env.WORLD_CUP_CONTROLLER_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID || ""),
     telegramThreadId: cleanText(process.env.WORLD_CUP_CONTROLLER_TELEGRAM_THREAD_ID || process.env.TELEGRAM_THREAD_ID || ""),
@@ -336,6 +339,9 @@ function persistControllerState(db, state) {
     "lastTelegramCommandAt",
     "lastTelegramCommandError",
     "lastTelegramDiscoveryRequest",
+    "lastNoCandidateNoticeAt",
+    "lastNoCandidateNoticeKey",
+    "lastNoCandidateNoticeReason",
     "telegramUpdateOffset",
     "forcePredictionNow",
   ];
@@ -1258,7 +1264,7 @@ function candidateGate(candidate, state, config, now = new Date()) {
   const isFixtureCandidate = isScheduledMatchCandidate(candidate);
   const isFallback = isFallbackCandidate(candidate);
   if (candidate.duplicate) {
-    reasons.push("duplicate candidate already dispatched");
+    reasons.push(DUPLICATE_GATE_REASON);
   }
   if (!isFixtureCandidate && stats.total >= config.dailyTotalLimit) {
     reasons.push(`daily total limit reached (${stats.total}/${config.dailyTotalLimit})`);
@@ -1327,6 +1333,54 @@ function selectCandidate(candidates, state, config, now = new Date()) {
     .sort((a, b) => candidatePriority(b) - candidatePriority(a) || b.score - a.score);
   const selected = sorted.find((candidate) => candidate.gate?.allowed);
   return { selected: selected || null, candidates: sorted };
+}
+
+function noCandidateNoticeDecision(state = {}, scan = {}, config = {}, now = new Date()) {
+  const top = Array.isArray(scan.candidates) ? scan.candidates[0] || null : null;
+  const reasons = Array.isArray(top?.gate?.reasons) ? top.gate.reasons.map(cleanText).filter(Boolean) : [];
+  if (reasons.includes(DUPLICATE_GATE_REASON)) {
+    return {
+      send: false,
+      key: "",
+      reason: "duplicate candidate already dispatched",
+    };
+  }
+
+  const diagnostics = scan.diagnostics || {};
+  const reasonText = reasons.join("; ") || "no candidates";
+  const key = hashText(
+    [
+      "no-candidate",
+      top?.key || top?.matchId || top?.topic || "none",
+      reasonText,
+      diagnostics.espnCandidates || 0,
+      diagnostics.youtubeSpikeCandidates || 0,
+      diagnostics.youtubeCandidates || 0,
+      diagnostics.geminiTrendCandidate ? 1 : 0,
+      diagnostics.evergreenCandidate ? 1 : 0,
+    ].join(":"),
+  ).slice(0, 20);
+  const cooldownMs = Math.max(0, Number(config.skipNoticeCooldownMinutes || 0)) * 60 * 1000;
+  const lastAtMs = Date.parse(state.lastNoCandidateNoticeAt || "");
+  if (
+    cooldownMs > 0 &&
+    state.lastNoCandidateNoticeKey === key &&
+    Number.isFinite(lastAtMs) &&
+    now.getTime() - lastAtMs < cooldownMs
+  ) {
+    return {
+      send: false,
+      key,
+      reason: `skip notice cooldown active (${Math.round((now.getTime() - lastAtMs) / 60000)}/${config.skipNoticeCooldownMinutes} minutes)`,
+    };
+  }
+  return { send: true, key, reason: reasonText };
+}
+
+function markNoCandidateNoticeSent(state, decision = {}, now = new Date()) {
+  state.lastNoCandidateNoticeAt = now.toISOString();
+  state.lastNoCandidateNoticeKey = cleanText(decision.key || "");
+  state.lastNoCandidateNoticeReason = cleanText(decision.reason || "");
 }
 
 function workflowInputs(candidate) {
@@ -2032,12 +2086,18 @@ async function runControllerOnce(config) {
   if (!selected) {
     state.lastStatus = "skipped";
     state.lastScanCompletedAt = nowIso();
-    recordScan(db, scan);
-    persistControllerState(db, state);
     const top = candidates[0] || null;
     const topReason = top?.gate?.reasons?.length ? ` Reason: ${top.gate.reasons.join("; ")}.` : "";
     const diagnosticText = ` Sources: ESPN ${espnCandidates.length}, YouTube spikes ${youtubeSpikeCandidates.length}, YouTube trends ${youtubeCandidates.length}, Gemini ${geminiCandidate ? 1 : 0}, fallback ${evergreenCandidate ? 1 : 0}.`;
-    await sendTelegram(config, `World Cup controller found no dispatchable candidate. Top score: ${top?.score || 0}.${topReason}${diagnosticText}`).catch(() => null);
+    const noticeDecision = noCandidateNoticeDecision(state, scan, config, now);
+    scan.noCandidateNotice = noticeDecision;
+    scan.diagnostics.noCandidateNotice = noticeDecision;
+    if (noticeDecision.send) {
+      markNoCandidateNoticeSent(state, noticeDecision, now);
+      await sendTelegram(config, `World Cup controller found no dispatchable candidate. Top score: ${top?.score || 0}.${topReason}${diagnosticText}`).catch(() => null);
+    }
+    recordScan(db, scan);
+    persistControllerState(db, state);
     return { telegramCommands: commandResults, skipped: true, reason: "No candidate passed the strict dispatch gate.", scan };
   }
   if (config.dryRun) {
@@ -2137,6 +2197,7 @@ export {
   isVipMatch,
   loadControllerState,
   localYouTubeClusterCandidate,
+  noCandidateNoticeDecision,
   normalizeEspnEvent,
   openControllerDb,
   parseGemmaIntentPayload,

@@ -12,6 +12,7 @@ import {
   isVipMatch,
   loadControllerState,
   localYouTubeClusterCandidate,
+  noCandidateNoticeDecision,
   normalizeEspnEvent,
   openControllerDb,
   parseGemmaIntentPayload,
@@ -360,4 +361,65 @@ test("evergreen fallback can pass the gate when strict trend threshold would blo
   const fallback = buildEvergreenFallbackCandidate(state, config, new Date("2026-06-14T12:00:00Z"));
   const result = selectCandidate([fallback], state, config, new Date("2026-06-14T12:00:00Z"));
   assert.equal(result.selected.source, "evergreen-fallback");
+});
+
+test("duplicate-only no-candidate scans do not spam Telegram notices", () => {
+  const decision = noCandidateNoticeDecision(
+    {},
+    {
+      candidates: [
+        {
+          key: "espn-duplicate",
+          score: 99,
+          gate: { reasons: ["duplicate candidate already dispatched"] },
+        },
+      ],
+      diagnostics: {
+        espnCandidates: 1,
+        youtubeSpikeCandidates: 0,
+        youtubeCandidates: 0,
+        geminiTrendCandidate: false,
+        evergreenCandidate: true,
+      },
+    },
+    { skipNoticeCooldownMinutes: 180 },
+    new Date("2026-06-14T12:00:00Z"),
+  );
+
+  assert.equal(decision.send, false);
+  assert.match(decision.reason, /duplicate/i);
+});
+
+test("non-duplicate no-candidate notices are throttled by notice key", () => {
+  const scan = {
+    candidates: [
+      {
+        key: "trend-too-weak",
+        score: 82,
+        gate: { reasons: ["trend score 82 is below strict threshold 95"] },
+      },
+    ],
+    diagnostics: {
+      espnCandidates: 0,
+      youtubeSpikeCandidates: 1,
+      youtubeCandidates: 0,
+      geminiTrendCandidate: false,
+      evergreenCandidate: false,
+    },
+  };
+  const config = { skipNoticeCooldownMinutes: 180 };
+  const first = noCandidateNoticeDecision({}, scan, config, new Date("2026-06-14T12:00:00Z"));
+  const second = noCandidateNoticeDecision(
+    {
+      lastNoCandidateNoticeKey: first.key,
+      lastNoCandidateNoticeAt: "2026-06-14T12:00:00.000Z",
+    },
+    scan,
+    config,
+    new Date("2026-06-14T13:00:00Z"),
+  );
+
+  assert.equal(first.send, true);
+  assert.equal(second.send, false);
+  assert.match(second.reason, /cooldown/i);
 });
