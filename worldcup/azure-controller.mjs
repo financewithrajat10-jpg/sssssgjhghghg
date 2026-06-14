@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
 import { path, fs, cleanText, hashText, nowIso, sleep, repoRoot, worldCupRoot, requestGeminiJsonWithFallbacks, getActiveGeminiKey } from "./modules/utils.mjs";
-import { knownOpeningFixtures } from "./modules/scheduler.mjs";
+import { knownOpeningFixtures, preTournamentTopics } from "./modules/scheduler.mjs";
 
 const DEFAULT_INTERVAL_MINUTES = 15;
 const DEFAULT_TREND_THRESHOLD = 95;
@@ -12,6 +14,40 @@ const DEFAULT_DAILY_TOTAL_LIMIT = 3;
 const DEFAULT_DAILY_TREND_LIMIT = 1;
 const DEFAULT_TREND_COOLDOWN_MINUTES = 120;
 const DEFAULT_STALE_DISPATCH_RETRY_MINUTES = 120;
+const DEFAULT_INTENT_LLM_TIMEOUT_MS = 15000;
+const DEFAULT_INTENT_LLM_MODEL = "gemma-4-31b-it";
+const DEFAULT_ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard";
+const DEFAULT_MATCH_LOOKAHEAD_DAYS = 3;
+const DEFAULT_PREMATCH_WINDOW_HOURS = [12, 24];
+const DEFAULT_POSTMATCH_DELAY_MINUTES = 20;
+const DEFAULT_YOUTUBE_SCAN_MAX = 150;
+const DEFAULT_YOUTUBE_SPIKE_INTERVAL_MINUTES = 30;
+const DEFAULT_ANALYZER_MODEL = "gemini-3.1-flash-lite";
+const INTENT_ACTIONS = new Set(["dispatch_specific", "discover_and_dispatch", "status", "help", "clarify"]);
+const INTENT_TYPES = new Set(["pre-tournament", "prediction", "postmatch", "breaking-news"]);
+const DEFAULT_VIP_TEAMS = [
+  "Real Madrid",
+  "Barcelona",
+  "Manchester City",
+  "Arsenal",
+  "Bayern Munich",
+  "Liverpool",
+  "Paris Saint-Germain",
+  "Manchester United",
+  "Juventus",
+  "Inter Milan",
+  "Argentina",
+  "Portugal",
+  "France",
+  "Brazil",
+  "England",
+  "USA",
+  "USMNT",
+  "United States",
+  "Mexico",
+  "Canada",
+];
+const DEFAULT_VIP_PLAYERS = ["Messi", "Ronaldo", "Mbappe", "Haaland", "Yamal", "Bellingham", "Vinicius", "De Bruyne", "Pulisic", "Neymar"];
 const MAJOR_TEAM_PATTERN = /\b(usa|usmnt|united states|mexico|canada|brazil|argentina|uruguay|colombia|england|france|spain|germany|portugal)\b/i;
 const RECOGNIZABLE_PLAYER_PATTERN = /\b(messi|ronaldo|neymar|mbappe|mbapp[eé]|pulisic|bellingham|vinicius|vin[ií]cius|modric|kane|yamal|musiala|haaland)\b/i;
 
@@ -66,9 +102,38 @@ function numberArg(value, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function listArg(value, fallback = []) {
+  const raw = value === undefined || value === null ? "" : String(value);
+  if (!raw.trim()) return [...fallback];
+  return raw
+    .split(/[|,]/)
+    .map(cleanText)
+    .filter(Boolean);
+}
+
+function prematchWindowArg(value) {
+  const parts = listArg(value, DEFAULT_PREMATCH_WINDOW_HOURS.map(String)).map(Number).filter(Number.isFinite);
+  const first = Math.max(0, parts[0] ?? DEFAULT_PREMATCH_WINDOW_HOURS[0]);
+  const second = Math.max(first, parts[1] ?? DEFAULT_PREMATCH_WINDOW_HOURS[1]);
+  return [first, second];
+}
+
+function safeJsonParse(text, fallback = null) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return fallback;
+  }
+}
+
+function jsonText(value) {
+  return JSON.stringify(value ?? null);
+}
+
 function controllerConfig(args = {}) {
   const repo = cleanText(args.repo || process.env.WORLD_CUP_GITHUB_REPO || process.env.GITHUB_REPOSITORY || "financewithrajat10-jpg/Money-Printing-Machine");
   const [owner, repoName] = repo.split("/");
+  const prematchWindowHours = prematchWindowArg(args.prematchWindowHours || process.env.WORLD_CUP_PREMATCH_WINDOW_HOURS);
   return {
     owner,
     repo: repoName,
@@ -93,10 +158,32 @@ function controllerConfig(args = {}) {
     offline: boolArg(args.offline, false),
     once: boolArg(args.once, false),
     force: boolArg(args.force, false),
+    legacyTriggerEnabled: boolArg(args.legacyTriggerEnabled ?? process.env.WORLD_CUP_LEGACY_TRIGGER_ENABLED, false),
     stateFile: path.resolve(cleanText(args.stateFile || process.env.WORLD_CUP_CONTROLLER_STATE_FILE || path.join(worldCupRoot, "azure-controller-state.json"))),
+    dbFile: path.resolve(cleanText(args.dbFile || process.env.WORLD_CUP_CONTROLLER_DB_FILE || path.join(worldCupRoot, "azure-controller-state.sqlite"))),
+    espnEnabled: boolArg(args.espnEnabled ?? process.env.WORLD_CUP_ESPN_ENABLED, true),
+    espnScoreboardUrl: cleanText(args.espnScoreboardUrl || process.env.WORLD_CUP_ESPN_SCOREBOARD_URL || DEFAULT_ESPN_SCOREBOARD_URL),
+    matchLookaheadDays: Math.max(0, numberArg(args.matchLookaheadDays || process.env.WORLD_CUP_MATCH_LOOKAHEAD_DAYS, DEFAULT_MATCH_LOOKAHEAD_DAYS)),
+    prematchWindowStartHours: prematchWindowHours[0],
+    prematchWindowEndHours: prematchWindowHours[1],
+    postmatchDelayMinutes: Math.max(0, numberArg(args.postmatchDelayMinutes || process.env.WORLD_CUP_POSTMATCH_DELAY_MINUTES, DEFAULT_POSTMATCH_DELAY_MINUTES)),
+    vipTeams: listArg(args.vipTeams || process.env.WORLD_CUP_VIP_TEAMS, DEFAULT_VIP_TEAMS),
+    vipPlayers: listArg(args.vipPlayers || process.env.WORLD_CUP_VIP_PLAYERS, DEFAULT_VIP_PLAYERS),
+    youtubeSpikeEnabled: boolArg(args.youtubeSpikeEnabled ?? process.env.WORLD_CUP_YOUTUBE_SPIKE_ENABLED, true),
+    youtubeScanMax: Math.max(1, numberArg(args.youtubeScanMax || process.env.WORLD_CUP_YOUTUBE_SCAN_MAX, DEFAULT_YOUTUBE_SCAN_MAX)),
+    youtubeSpikeIntervalMinutes: Math.max(1, numberArg(args.youtubeSpikeIntervalMinutes || process.env.WORLD_CUP_YOUTUBE_SPIKE_INTERVAL_MINUTES, DEFAULT_YOUTUBE_SPIKE_INTERVAL_MINUTES)),
+    analyzerModel: cleanText(args.analyzerModel || process.env.WORLD_CUP_ANALYZER_MODEL || process.env.WORLD_CUP_SEARCH_MODEL || DEFAULT_ANALYZER_MODEL),
+    evergreenFallback: boolArg(args.evergreenFallback ?? process.env.WORLD_CUP_EVERGREEN_FALLBACK, true),
     telegramBotToken: cleanText(process.env.WORLD_CUP_CONTROLLER_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || ""),
     telegramChatId: cleanText(process.env.WORLD_CUP_CONTROLLER_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID || ""),
     telegramThreadId: cleanText(process.env.WORLD_CUP_CONTROLLER_TELEGRAM_THREAD_ID || process.env.TELEGRAM_THREAD_ID || ""),
+    intentLlmEnabled: boolArg(args.intentLlmEnabled ?? process.env.WORLD_CUP_INTENT_LLM_ENABLED, false),
+    intentLlmProvider: cleanText(args.intentLlmProvider || process.env.WORLD_CUP_INTENT_LLM_PROVIDER || "gemma-api"),
+    intentLlmUrl: cleanText(args.intentLlmUrl || process.env.WORLD_CUP_INTENT_LLM_URL || ""),
+    intentLlmApiKey: cleanText(process.env.WORLD_CUP_INTENT_LLM_API_KEY || ""),
+    intentLlmModel: cleanText(args.intentLlmModel || process.env.WORLD_CUP_INTENT_LLM_MODEL || DEFAULT_INTENT_LLM_MODEL),
+    intentLlmApiStyle: cleanText(args.intentLlmApiStyle || process.env.WORLD_CUP_INTENT_LLM_API_STYLE || "openai-chat").toLowerCase(),
+    intentLlmTimeoutMs: Math.max(3000, numberArg(args.intentLlmTimeoutMs || process.env.WORLD_CUP_INTENT_LLM_TIMEOUT_MS, DEFAULT_INTENT_LLM_TIMEOUT_MS)),
   };
 }
 
@@ -111,6 +198,270 @@ async function readJsonFile(filePath, fallback) {
 async function writeJsonFile(filePath, data) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+}
+
+async function openControllerDb(config) {
+  await fs.mkdir(path.dirname(config.dbFile), { recursive: true });
+  const db = new DatabaseSync(config.dbFile);
+  initControllerDb(db);
+  return db;
+}
+
+function initControllerDb(db) {
+  db.exec(`
+    PRAGMA journal_mode = WAL;
+    CREATE TABLE IF NOT EXISTS controller_meta (
+      key TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS dispatched (
+      key TEXT PRIMARY KEY,
+      candidate_json TEXT NOT NULL,
+      details_json TEXT NOT NULL,
+      source TEXT,
+      dispatched_at TEXT NOT NULL,
+      workflow_conclusion TEXT,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS scans (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scanned_at TEXT NOT NULL,
+      selected_json TEXT,
+      candidates_json TEXT NOT NULL,
+      warnings_json TEXT NOT NULL,
+      diagnostics_json TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS espn_matches (
+      match_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      kickoff TEXT,
+      status TEXT,
+      home TEXT,
+      away TEXT,
+      score TEXT,
+      snapshot_json TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS youtube_videos (
+      video_id TEXT PRIMARY KEY,
+      title TEXT,
+      channel_title TEXT,
+      published_at TEXT,
+      query TEXT,
+      first_seen_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      last_views INTEGER NOT NULL DEFAULT 0,
+      last_comments INTEGER NOT NULL DEFAULT 0,
+      snapshot_json TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS youtube_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      video_id TEXT NOT NULL,
+      scanned_at TEXT NOT NULL,
+      query TEXT,
+      views INTEGER NOT NULL DEFAULT 0,
+      comments INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_dispatched_day ON dispatched(dispatched_at);
+    CREATE INDEX IF NOT EXISTS idx_scans_scanned_at ON scans(scanned_at);
+    CREATE INDEX IF NOT EXISTS idx_youtube_snapshots_video ON youtube_snapshots(video_id, scanned_at);
+  `);
+}
+
+function readMetaState(db) {
+  const state = { version: 2, dispatched: {}, scans: [] };
+  for (const row of db.prepare("SELECT key, value_json FROM controller_meta").all()) {
+    state[row.key] = safeJsonParse(row.value_json, null);
+  }
+  for (const row of db.prepare("SELECT key, candidate_json, details_json, dispatched_at FROM dispatched").all()) {
+    const candidate = safeJsonParse(row.candidate_json, null);
+    const details = safeJsonParse(row.details_json, {});
+    if (!candidate) continue;
+    state.dispatched[row.key] = {
+      key: row.key,
+      candidate,
+      dispatchedAt: row.dispatched_at,
+      ...details,
+    };
+  }
+  const scans = db
+    .prepare("SELECT scanned_at, selected_json, candidates_json, warnings_json, diagnostics_json FROM scans ORDER BY scanned_at DESC LIMIT 200")
+    .all();
+  state.scans = scans.map((row) => ({
+    scannedAt: row.scanned_at,
+    selected: safeJsonParse(row.selected_json, null),
+    candidates: safeJsonParse(row.candidates_json, []),
+    warnings: safeJsonParse(row.warnings_json, []),
+    diagnostics: safeJsonParse(row.diagnostics_json, {}),
+  }));
+  return state;
+}
+
+async function migrateLegacyJsonState(config, db) {
+  const migrated = db.prepare("SELECT value_json FROM controller_meta WHERE key = ?").get("legacyJsonMigrated");
+  if (safeJsonParse(migrated?.value_json || "false", false)) return;
+  const count = db.prepare("SELECT COUNT(*) AS count FROM dispatched").get()?.count || 0;
+  if (count > 0) {
+    db.prepare("INSERT OR REPLACE INTO controller_meta(key, value_json, updated_at) VALUES (?, ?, ?)").run("legacyJsonMigrated", "true", nowIso());
+    return;
+  }
+  const legacy = await readJsonFile(config.stateFile, null);
+  if (!legacy || typeof legacy !== "object") {
+    db.prepare("INSERT OR REPLACE INTO controller_meta(key, value_json, updated_at) VALUES (?, ?, ?)").run("legacyJsonMigrated", "true", nowIso());
+    return;
+  }
+  const state = { version: 2, dispatched: legacy.dispatched || {}, scans: legacy.scans || [], ...legacy };
+  persistControllerState(db, state);
+  for (const scan of state.scans || []) {
+    recordScan(db, scan);
+  }
+  db.prepare("INSERT OR REPLACE INTO controller_meta(key, value_json, updated_at) VALUES (?, ?, ?)").run("legacyJsonMigrated", "true", nowIso());
+}
+
+async function loadControllerState(config, db) {
+  await migrateLegacyJsonState(config, db);
+  return readMetaState(db);
+}
+
+function persistControllerState(db, state) {
+  const updatedAt = nowIso();
+  const metaKeys = [
+    "lastStatus",
+    "lastError",
+    "lastDispatchAt",
+    "lastWorkflowCompletedAt",
+    "lastScanStartedAt",
+    "lastScanCompletedAt",
+    "lastTelegramCommandAt",
+    "lastTelegramCommandError",
+    "lastTelegramDiscoveryRequest",
+    "telegramUpdateOffset",
+    "forcePredictionNow",
+  ];
+  const upsertMeta = db.prepare(`
+    INSERT INTO controller_meta(key, value_json, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
+  `);
+  for (const key of metaKeys) {
+    if (state[key] !== undefined) upsertMeta.run(key, jsonText(state[key]), updatedAt);
+  }
+  const upsertDispatch = db.prepare(`
+    INSERT INTO dispatched(key, candidate_json, details_json, source, dispatched_at, workflow_conclusion, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET
+      candidate_json = excluded.candidate_json,
+      details_json = excluded.details_json,
+      source = excluded.source,
+      dispatched_at = excluded.dispatched_at,
+      workflow_conclusion = excluded.workflow_conclusion,
+      updated_at = excluded.updated_at
+  `);
+  for (const [key, entry] of Object.entries(state.dispatched || {})) {
+    const { candidate, ...details } = entry || {};
+    if (!candidate) continue;
+    upsertDispatch.run(
+      key,
+      jsonText(candidate),
+      jsonText(details),
+      cleanText(candidate.source),
+      cleanText(entry.dispatchedAt || entry.attemptedAt || updatedAt),
+      cleanText(entry.workflowRun?.conclusion || ""),
+      updatedAt,
+    );
+  }
+}
+
+function recordScan(db, scan = {}) {
+  if (!scan?.scannedAt) return;
+  db.prepare(`
+    INSERT INTO scans(scanned_at, selected_json, candidates_json, warnings_json, diagnostics_json)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    scan.scannedAt,
+    jsonText(scan.selected || null),
+    jsonText(scan.candidates || []),
+    jsonText(scan.warnings || []),
+    jsonText(scan.diagnostics || {}),
+  );
+}
+
+function recordEspnMatches(db, matches = [], scannedAt = nowIso()) {
+  const stmt = db.prepare(`
+    INSERT INTO espn_matches(match_id, name, kickoff, status, home, away, score, snapshot_json, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(match_id) DO UPDATE SET
+      name = excluded.name,
+      kickoff = excluded.kickoff,
+      status = excluded.status,
+      home = excluded.home,
+      away = excluded.away,
+      score = excluded.score,
+      snapshot_json = excluded.snapshot_json,
+      last_seen_at = excluded.last_seen_at
+  `);
+  for (const match of matches) {
+    stmt.run(
+      cleanText(match.id),
+      cleanText(match.name),
+      cleanText(match.kickoff),
+      cleanText(match.status),
+      cleanText(match.home),
+      cleanText(match.away),
+      cleanText(match.score),
+      jsonText(match),
+      scannedAt,
+    );
+  }
+}
+
+function latestYouTubeSnapshot(db, videoId) {
+  return (
+    db
+      .prepare("SELECT video_id, scanned_at, views, comments FROM youtube_snapshots WHERE video_id = ? ORDER BY scanned_at DESC LIMIT 1")
+      .get(videoId) || null
+  );
+}
+
+function lastYouTubeScanAt(db) {
+  return cleanText(db.prepare("SELECT MAX(scanned_at) AS scanned_at FROM youtube_snapshots").get()?.scanned_at);
+}
+
+function recordYouTubeSnapshot(db, video, scannedAt = nowIso()) {
+  const previous = latestYouTubeSnapshot(db, video.id);
+  db.prepare(`
+    INSERT INTO youtube_videos(video_id, title, channel_title, published_at, query, first_seen_at, last_seen_at, last_views, last_comments, snapshot_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(video_id) DO UPDATE SET
+      title = excluded.title,
+      channel_title = excluded.channel_title,
+      published_at = excluded.published_at,
+      query = excluded.query,
+      last_seen_at = excluded.last_seen_at,
+      last_views = excluded.last_views,
+      last_comments = excluded.last_comments,
+      snapshot_json = excluded.snapshot_json
+  `).run(
+    video.id,
+    cleanText(video.title),
+    cleanText(video.channelTitle),
+    cleanText(video.publishedAt),
+    cleanText(video.query),
+    scannedAt,
+    scannedAt,
+    Number(video.views || 0),
+    Number(video.comments || 0),
+    jsonText(video),
+  );
+  db.prepare("INSERT INTO youtube_snapshots(video_id, scanned_at, query, views, comments) VALUES (?, ?, ?, ?, ?)").run(
+    video.id,
+    scannedAt,
+    cleanText(video.query),
+    Number(video.views || 0),
+    Number(video.comments || 0),
+  );
+  return previous;
 }
 
 function candidateKey(candidate) {
@@ -216,6 +567,172 @@ function configuredFixtures() {
   return knownOpeningFixtures();
 }
 
+function yyyymmdd(date) {
+  return date.toISOString().slice(0, 10).replace(/-/g, "");
+}
+
+function espnScheduleDates(now = new Date(), lookaheadDays = DEFAULT_MATCH_LOOKAHEAD_DAYS) {
+  const dates = [];
+  for (let offset = -1; offset <= lookaheadDays; offset += 1) {
+    const date = new Date(now.getTime() + offset * 24 * 60 * 60 * 1000);
+    dates.push(yyyymmdd(date));
+  }
+  return [...new Set(dates)];
+}
+
+function espnUrlForDate(baseUrl, dateText) {
+  const url = new URL(baseUrl);
+  url.searchParams.set("dates", dateText);
+  return url;
+}
+
+function normalizeEspnEvent(event = {}) {
+  const competition = Array.isArray(event.competitions) ? event.competitions[0] || {} : {};
+  const competitors = Array.isArray(competition.competitors) ? competition.competitors : [];
+  if (!event.id || !event.date || competitors.length < 2) return null;
+  const home = competitors.find((competitor) => cleanText(competitor.homeAway).toLowerCase() === "home") || competitors[0];
+  const away = competitors.find((competitor) => cleanText(competitor.homeAway).toLowerCase() === "away") || competitors.find((competitor) => competitor !== home) || competitors[1];
+  const homeName = cleanText(home?.team?.displayName || home?.team?.name || home?.team?.shortDisplayName);
+  const awayName = cleanText(away?.team?.displayName || away?.team?.name || away?.team?.shortDisplayName);
+  if (!homeName || !awayName) return null;
+  const kickoffMs = Date.parse(event.date);
+  if (!Number.isFinite(kickoffMs)) return null;
+  const statusType = event.status?.type || {};
+  const status = cleanText(statusType.description || statusType.name || event.status?.description || "");
+  const statusState = cleanText(statusType.state || "").toLowerCase();
+  const completed = Boolean(statusType.completed) || statusState === "post" || /^(final|ft|full time|full-time)$/i.test(status);
+  const homeScore = cleanText(home?.score || "0");
+  const awayScore = cleanText(away?.score || "0");
+  return {
+    id: cleanText(event.id),
+    name: cleanText(event.name || event.shortName || `${awayName} at ${homeName}`),
+    kickoff: new Date(kickoffMs).toISOString(),
+    status,
+    statusState,
+    completed,
+    home: homeName,
+    away: awayName,
+    score: `${homeName} ${homeScore} - ${awayScore} ${awayName}`,
+    rawStatus: statusType,
+  };
+}
+
+function normalizeTeamComparable(value = "") {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/\b(?:fc|sc|cf|afc|the)\b/g, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function regexEscape(text = "") {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function teamMatchesVip(teamName = "", vipTeam = "") {
+  const team = normalizeTeamComparable(teamName);
+  const vip = normalizeTeamComparable(vipTeam);
+  if (!team || !vip) return false;
+  return team === vip;
+}
+
+function textHasVipPlayer(text = "", player = "") {
+  const cleaned = cleanText(text);
+  const value = cleanText(player);
+  if (!cleaned || !value) return false;
+  return new RegExp(`\\b${regexEscape(value)}\\b`, "i").test(cleaned);
+}
+
+function isVipMatch(match = {}, config = {}) {
+  const teams = [match.home, match.away].map(cleanText).filter(Boolean);
+  for (const team of config.vipTeams || DEFAULT_VIP_TEAMS) {
+    if (teams.some((teamName) => teamMatchesVip(teamName, team))) return true;
+  }
+  const haystack = cleanText(`${match.home || ""} ${match.away || ""} ${match.name || ""}`);
+  for (const player of config.vipPlayers || DEFAULT_VIP_PLAYERS) {
+    if (textHasVipPlayer(haystack, player)) return true;
+  }
+  return false;
+}
+
+function espnCandidateFromMatch(match = {}, config = {}, now = new Date()) {
+  if (!isVipMatch(match, config)) return null;
+  const kickoffMs = Date.parse(match.kickoff || "");
+  if (!Number.isFinite(kickoffMs)) return null;
+  const nowMs = now.getTime();
+  const timeUntilHours = (kickoffMs - nowMs) / 36e5;
+  const preMin = Number(config.prematchWindowStartHours ?? DEFAULT_PREMATCH_WINDOW_HOURS[0]);
+  const preMax = Number(config.prematchWindowEndHours ?? DEFAULT_PREMATCH_WINDOW_HOURS[1]);
+  const base = {
+    teamA: match.away,
+    teamB: match.home,
+    kickoff: match.kickoff,
+    matchId: `espn-${match.id}`,
+    source: "espn-scoreboard",
+    espn: match,
+  };
+  if (timeUntilHours >= preMin && timeUntilHours <= preMax) {
+    return {
+      ...base,
+      type: "prediction",
+      topic: `${match.away} vs ${match.home} match planning: the pressure angle fans should watch`,
+      score: 100,
+      reason: `ESPN VIP pre-match window (${Math.round(timeUntilHours * 10) / 10} hours before kickoff).`,
+      timing: "espn-prematch",
+    };
+  }
+  const postDelayMs = Number(config.postmatchDelayMinutes ?? DEFAULT_POSTMATCH_DELAY_MINUTES) * 60 * 1000;
+  if (match.completed && nowMs >= kickoffMs + postDelayMs) {
+    return {
+      ...base,
+      type: "postmatch",
+      topic: `${match.away} vs ${match.home} post-match analysis: the result everyone is reacting to`,
+      score: 99,
+      reason: `ESPN final-status trigger. Final score: ${match.score}.`,
+      timing: "espn-postmatch",
+    };
+  }
+  return null;
+}
+
+async function fetchEspnMatches(config, warnings, now = new Date()) {
+  if (!config.espnEnabled) return [];
+  const matches = [];
+  const seen = new Set();
+  for (const dateText of espnScheduleDates(now, config.matchLookaheadDays)) {
+    try {
+      const response = await fetchWithControllerTimeout(espnUrlForDate(config.espnScoreboardUrl, dateText), {}, config.fetchTimeoutMs);
+      const body = await response.text().catch(() => "");
+      if (!response.ok) {
+        warnings.push(`ESPN schedule fetch failed for ${dateText}: ${response.status} ${body.slice(0, 160)}`);
+        continue;
+      }
+      const data = body ? JSON.parse(body) : {};
+      for (const event of Array.isArray(data.events) ? data.events : []) {
+        const match = normalizeEspnEvent(event);
+        if (!match || seen.has(match.id)) continue;
+        seen.add(match.id);
+        matches.push(match);
+      }
+    } catch (error) {
+      warnings.push(`ESPN schedule fetch failed for ${dateText}: ${error.message}`);
+    }
+  }
+  return matches;
+}
+
+async function buildEspnCandidates(config, state, db, warnings, now = new Date()) {
+  if (config.offline || !config.espnEnabled) return [];
+  const matches = await fetchEspnMatches(config, warnings, now);
+  recordEspnMatches(db, matches, nowIso());
+  const candidates = matches.map((match) => espnCandidateFromMatch(match, config, now)).filter(Boolean);
+  if (!matches.length) warnings.push("ESPN returned no soccer matches for the configured lookahead window.");
+  if (matches.length && !candidates.length) warnings.push(`ESPN returned ${matches.length} matches, but none were VIP matches inside pre/post trigger windows.`);
+  return candidates;
+}
+
 function youtubeQueries() {
   return String(process.env.WORLD_CUP_TREND_QUERIES || "FIFA World Cup 2026|World Cup 2026|football World Cup|USMNT World Cup|Messi Ronaldo World Cup")
     .split("|")
@@ -233,13 +750,15 @@ async function fetchWithControllerTimeout(url, options = {}, timeoutMs = DEFAULT
   }
 }
 
-async function youtubeSearch(config, query) {
+async function youtubeSearch(config, query, options = {}) {
   if (!config.youtubeApiKey) return [];
-  const publishedAfter = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+  const maxResults = Math.max(1, Math.min(50, Number(options.maxResults || 8)));
+  const publishedAfterHours = Math.max(1, Number(options.publishedAfterHours || 4));
+  const publishedAfter = new Date(Date.now() - publishedAfterHours * 60 * 60 * 1000).toISOString();
   const searchUrl = new URL("https://www.googleapis.com/youtube/v3/search");
   searchUrl.searchParams.set("part", "snippet");
   searchUrl.searchParams.set("type", "video");
-  searchUrl.searchParams.set("maxResults", "8");
+  searchUrl.searchParams.set("maxResults", String(maxResults));
   searchUrl.searchParams.set("order", "date");
   searchUrl.searchParams.set("q", query);
   searchUrl.searchParams.set("publishedAfter", publishedAfter);
@@ -371,6 +890,229 @@ async function buildYouTubeCandidates(config, warnings) {
   return all;
 }
 
+function youtubeSpikeMetrics(video = {}, previous = null, now = new Date()) {
+  const currentViews = Number(video.views || 0);
+  const currentComments = Number(video.comments || 0);
+  const ageHours = Math.max(0.25, (now.getTime() - Date.parse(video.publishedAt || nowIso())) / 36e5);
+  const lifetimeViewsPerHour = currentViews / ageHours;
+  const lifetimeCommentsPerHour = currentComments / ageHours;
+  let deltaViewsPerHour = lifetimeViewsPerHour;
+  let deltaCommentsPerHour = lifetimeCommentsPerHour;
+  let viewMultiplier = 1;
+  if (previous?.scanned_at) {
+    const elapsedHours = Math.max(0.25, (now.getTime() - Date.parse(previous.scanned_at)) / 36e5);
+    const deltaViews = Math.max(0, currentViews - Number(previous.views || 0));
+    const deltaComments = Math.max(0, currentComments - Number(previous.comments || 0));
+    deltaViewsPerHour = deltaViews / elapsedHours;
+    deltaCommentsPerHour = deltaComments / elapsedHours;
+    const previousAgeHours = Math.max(0.25, (Date.parse(previous.scanned_at) - Date.parse(video.publishedAt || nowIso())) / 36e5);
+    const previousViewsPerHour = Number(previous.views || 0) / previousAgeHours;
+    viewMultiplier = deltaViewsPerHour / Math.max(1, previousViewsPerHour);
+  }
+  const velocitySignal = Math.log10(Math.max(lifetimeViewsPerHour, deltaViewsPerHour) + 1) * 12;
+  const commentSignal = Math.log10(Math.max(currentComments, deltaCommentsPerHour) + 1) * 8;
+  const multiplierSignal = Math.min(20, Math.max(0, viewMultiplier - 1) * 8);
+  const entitySignal = /messi|ronaldo|usa|usmnt|brazil|argentina|england|france|spain|germany|portugal|mexico|world cup|mbappe|bellingham|yamal/i.test(
+    video.title || "",
+  )
+    ? 16
+    : 6;
+  const debateSignal = /vs|prediction|shock|why|problem|pressure|controversy|lineup|injury|reaction|final|highlights/i.test(video.title || "") ? 14 : 5;
+  const freshSignal = ageHours <= 6 ? 10 : ageHours <= 24 ? 6 : 2;
+  const score = Math.round(Math.min(100, 18 + velocitySignal + commentSignal + multiplierSignal + entitySignal + debateSignal + freshSignal));
+  return {
+    score,
+    ageHours,
+    lifetimeViewsPerHour,
+    deltaViewsPerHour,
+    deltaCommentsPerHour,
+    viewMultiplier,
+    hasPrevious: Boolean(previous),
+  };
+}
+
+function entityTokensForText(text = "", config = {}) {
+  const cleaned = cleanText(text).toLowerCase();
+  const tokens = [];
+  for (const entity of [...(config.vipTeams || DEFAULT_VIP_TEAMS), ...(config.vipPlayers || DEFAULT_VIP_PLAYERS)]) {
+    const value = cleanText(entity).toLowerCase();
+    if (value && cleaned.includes(value)) tokens.push(entity);
+  }
+  const genericMatches = cleaned.match(/\b(world cup|fifa|usmnt|usa|messi|ronaldo|mbappe|bellingham|yamal|pulisic|neymar|brazil|argentina|england|france|spain|germany|portugal|mexico)\b/g) || [];
+  return [...new Set([...tokens, ...genericMatches])].slice(0, 8);
+}
+
+function localYouTubeClusterCandidate(videos = [], config = {}) {
+  const groups = new Map();
+  for (const video of videos) {
+    const entities = entityTokensForText(video.title, config);
+    const key = cleanText(entities[0] || topicFromYouTubeVideo(video).teamA || topicFromYouTubeVideo(video).topic.split(/\s+/).slice(0, 4).join(" ")).toLowerCase();
+    if (!key) continue;
+    const current = groups.get(key) || { key, entities, videos: [], score: 0 };
+    current.videos.push(video);
+    current.score = Math.max(current.score, Number(video.spike?.score || scoreYouTubeVideo(video)));
+    current.entities = [...new Set([...current.entities, ...entities])].slice(0, 8);
+    groups.set(key, current);
+  }
+  const best = [...groups.values()]
+    .map((group) => ({
+      ...group,
+      clusterScore: Math.min(100, group.score + Math.min(18, (group.videos.length - 1) * 6)),
+    }))
+    .sort((a, b) => b.clusterScore - a.clusterScore || b.videos.length - a.videos.length)[0];
+  if (!best?.videos?.length) return null;
+  const leader = best.videos.sort((a, b) => Number(b.spike?.score || 0) - Number(a.spike?.score || 0))[0];
+  const topic = topicFromYouTubeVideo(leader);
+  return {
+    type: topic.type || "pre-tournament",
+    topic: topic.topic,
+    teamA: topic.teamA,
+    teamB: topic.teamB,
+    score: best.clusterScore,
+    reason: `YouTube spike cluster from ${best.videos.length} recent videos around ${best.entities.join(", ") || "one football topic"}.`,
+    source: "youtube-spike-cluster",
+    entities: best.entities,
+    evidence: best.videos.slice(0, 6).map((video) => ({
+      id: video.id,
+      title: video.title,
+      channelTitle: video.channelTitle,
+      views: video.views,
+      comments: video.comments,
+      score: video.spike?.score,
+    })),
+  };
+}
+
+async function buildGeminiTopicClusterCandidate(config, videos, warnings) {
+  if (!videos.length) return null;
+  const keyInfo = await getActiveGeminiKey();
+  if (!keyInfo?.apiKey) {
+    warnings.push("Gemini analyzer skipped because no active Gemini API key was available; using local YouTube clustering.");
+    return localYouTubeClusterCandidate(videos, config);
+  }
+  const prompt = `
+You are a World Cup short-video trigger analyst.
+Cluster these recent football YouTube videos and find the single strongest repeated topic to dispatch.
+Prefer concrete matches, teams, players, lineup/injury/pressure narratives, and post-match reactions.
+Return JSON only:
+{
+  "topic": "specific short-video topic",
+  "type": "pre-tournament, prediction, or postmatch",
+  "teamA": "",
+  "teamB": "",
+  "score": 0,
+  "confidence": 0,
+  "reason": "why this topic is spiking",
+  "entities": [],
+  "evidence": [{"id": "", "title": "", "channelTitle": ""}]
+}
+
+Videos:
+${JSON.stringify(
+  videos.slice(0, 40).map((video) => ({
+    id: video.id,
+    title: video.title,
+    channelTitle: video.channelTitle,
+    views: video.views,
+    comments: video.comments,
+    publishedAt: video.publishedAt,
+    spike: video.spike,
+  })),
+)}
+`.trim();
+  try {
+    const result = await requestGeminiJsonWithFallbacks({
+      keyInfo,
+      primaryModel: config.analyzerModel,
+      fallbackModels: String(process.env.WORLD_CUP_ANALYZER_FALLBACK_MODELS || process.env.WORLD_CUP_SEARCH_FALLBACK_MODELS || "gemini-3.1-flash-lite,gemini-2.5-flash")
+        .split(",")
+        .map(cleanText)
+        .filter(Boolean),
+      prompt,
+      temperature: 0.2,
+      search: false,
+    });
+    const topic = cleanText(result.json?.topic);
+    if (!topic) return localYouTubeClusterCandidate(videos, config);
+    const rawScore = Number(result.json?.score);
+    const confidence = Number(result.json?.confidence);
+    return {
+      type: ["prediction", "postmatch", "pre-tournament"].includes(cleanText(result.json?.type).toLowerCase()) ? cleanText(result.json.type).toLowerCase() : "pre-tournament",
+      topic,
+      teamA: cleanText(result.json?.teamA),
+      teamB: cleanText(result.json?.teamB),
+      score: Number.isFinite(rawScore) ? Math.max(0, Math.min(100, rawScore)) : localYouTubeClusterCandidate(videos, config)?.score || 0,
+      reason: cleanText(result.json?.reason) || "Gemini topic analyzer selected a repeated YouTube spike.",
+      source: "gemini-topic-analyzer",
+      analyzerModel: result.model,
+      confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(100, confidence)) : 0,
+      entities: Array.isArray(result.json?.entities) ? result.json.entities.map(cleanText).filter(Boolean).slice(0, 8) : [],
+      evidence: Array.isArray(result.json?.evidence) ? result.json.evidence.slice(0, 6) : [],
+    };
+  } catch (error) {
+    warnings.push(`Gemini topic analyzer failed: ${error.message}; using local YouTube clustering.`);
+    return localYouTubeClusterCandidate(videos, config);
+  }
+}
+
+async function buildYouTubeSpikeCandidates(config, db, warnings, now = new Date()) {
+  if (config.offline || !config.youtubeSpikeEnabled) return [];
+  if (!config.youtubeApiKey) {
+    warnings.push("YouTube spike scanner skipped because YOUTUBE_API_KEY/GOOGLE_API_KEY is missing.");
+    return [];
+  }
+  const lastScanAt = lastYouTubeScanAt(db);
+  if (lastScanAt && !config.force) {
+    const elapsedMinutes = (now.getTime() - Date.parse(lastScanAt)) / 60000;
+    if (Number.isFinite(elapsedMinutes) && elapsedMinutes < config.youtubeSpikeIntervalMinutes) {
+      warnings.push(`YouTube spike scanner skipped; last scan was ${Math.round(elapsedMinutes)} minutes ago (${config.youtubeSpikeIntervalMinutes}-minute interval).`);
+      return [];
+    }
+  }
+  const queries = youtubeQueries();
+  const perQuery = Math.max(1, Math.min(50, Math.ceil(config.youtubeScanMax / Math.max(1, queries.length))));
+  const seenVideoIds = new Set();
+  const scanned = [];
+  for (const query of queries) {
+    try {
+      const videos = await youtubeSearch(config, query, { maxResults: perQuery, publishedAfterHours: 24 });
+      for (const video of videos) {
+        if (seenVideoIds.has(video.id)) continue;
+        seenVideoIds.add(video.id);
+        if (scanned.length >= config.youtubeScanMax) break;
+        const rejected = rejectedYouTubeTrendReason(video);
+        if (rejected) {
+          warnings.push(`Rejected YouTube spike "${video.title}": ${rejected}.`);
+          continue;
+        }
+        const previous = recordYouTubeSnapshot(db, video, now.toISOString());
+        const spike = youtubeSpikeMetrics(video, previous, now);
+        scanned.push({ ...video, spike });
+      }
+    } catch (error) {
+      warnings.push(`YouTube spike query failed for "${query}": ${error.message}`);
+    }
+  }
+  if (!scanned.length) return [];
+  const videos = scanned.sort((a, b) => Number(b.spike?.score || 0) - Number(a.spike?.score || 0));
+  const cluster = await buildGeminiTopicClusterCandidate(config, videos, warnings);
+  const directCandidates = videos.slice(0, 5).map((video) => {
+    const topic = topicFromYouTubeVideo(video);
+    return {
+      type: topic.type || "pre-tournament",
+      topic: topic.topic,
+      teamA: topic.teamA,
+      teamB: topic.teamB,
+      score: video.spike.score,
+      reason: `YouTube spike signal from ${video.channelTitle || "recent video"} (${Math.round(video.spike.deltaViewsPerHour)} delta views/hour, ${video.comments} comments).`,
+      source: "youtube-spike",
+      youtube: video,
+      spike: video.spike,
+    };
+  });
+  return [...(cluster ? [cluster] : []), ...directCandidates];
+}
+
 async function buildGeminiTrendCandidate(warnings) {
   const keyInfo = await getActiveGeminiKey();
   if (!keyInfo?.apiKey) return null;
@@ -429,17 +1171,54 @@ Return JSON only:
   }
 }
 
+function buildEvergreenFallbackCandidate(state = {}, config = {}, now = new Date()) {
+  if (!config.evergreenFallback) return null;
+  const topics = preTournamentTopics();
+  if (!topics.length) return null;
+  const dispatchedKeys = new Set(Object.keys(state.dispatched || {}));
+  for (let offset = 0; offset < topics.length; offset += 1) {
+    const topic = topics[(now.getUTCDate() + offset) % topics.length];
+    const candidate = {
+      type: "pre-tournament",
+      topic,
+      teamA: "",
+      teamB: "",
+      kickoff: "",
+      matchId: `evergreen-${hashText(topic).slice(0, 12)}`,
+      score: 80,
+      reason: "Evergreen fallback selected because no stronger live spike or match-window candidate passed.",
+      source: "evergreen-fallback",
+    };
+    if (!dispatchedKeys.has(candidateKey(candidate))) return candidate;
+  }
+  return null;
+}
+
 function candidateGroundedSourceCount(candidate) {
-  if (candidate?.source === "fixture-scheduler") return 1;
-  if (candidate?.source === "youtube") return candidate.youtube?.id ? 1 : 0;
+  if (["fixture-scheduler", "espn-scoreboard", "evergreen-fallback"].includes(candidate?.source)) return 1;
+  if (["youtube", "youtube-spike"].includes(candidate?.source)) return candidate.youtube?.id ? 1 : 0;
+  if (candidate?.source === "youtube-spike-cluster") return Array.isArray(candidate.evidence) ? candidate.evidence.length : 1;
   const explicitSources = Array.isArray(candidate?.sources) ? candidate.sources.filter((source) => cleanText(source?.url || source?.title)).length : 0;
   const groundingSources = Number(candidate?.groundingHealth?.sourceCount || 0);
   return Math.max(explicitSources, groundingSources);
 }
 
 function candidateHasRecognizableEntity(candidate) {
+  if (candidate?.source === "evergreen-fallback") return true;
   const text = candidateText(candidate);
   return MAJOR_TEAM_PATTERN.test(text) || RECOGNIZABLE_PLAYER_PATTERN.test(text);
+}
+
+function isScheduledMatchCandidate(candidate) {
+  return ["fixture-scheduler", "espn-scoreboard"].includes(candidate?.source);
+}
+
+function isFallbackCandidate(candidate) {
+  return candidate?.source === "evergreen-fallback";
+}
+
+function isSpikeCandidate(candidate) {
+  return ["gemini-topic-analyzer", "youtube-spike-cluster", "youtube-spike"].includes(candidate?.source);
 }
 
 function dispatchedEntries(state) {
@@ -476,7 +1255,8 @@ function youtubeVelocity(candidate) {
 function candidateGate(candidate, state, config, now = new Date()) {
   const reasons = [];
   const stats = dispatchStatsForToday(state, now);
-  const isFixtureCandidate = candidate.source === "fixture-scheduler";
+  const isFixtureCandidate = isScheduledMatchCandidate(candidate);
+  const isFallback = isFallbackCandidate(candidate);
   if (candidate.duplicate) {
     reasons.push("duplicate candidate already dispatched");
   }
@@ -492,7 +1272,7 @@ function candidateGate(candidate, state, config, now = new Date()) {
     };
   }
 
-  if (candidate.score < config.trendThreshold) {
+  if (!isFallback && candidate.score < config.trendThreshold) {
     reasons.push(`trend score ${candidate.score} is below strict threshold ${config.trendThreshold}`);
   }
   if (stats.trends >= config.dailyTrendLimit) {
@@ -511,9 +1291,10 @@ function candidateGate(candidate, state, config, now = new Date()) {
   if (candidate.source === "gemini-search-grounding" && sourceCount < config.requiredGroundedSources) {
     reasons.push(`not enough grounded source URLs (${sourceCount}/${config.requiredGroundedSources})`);
   }
-  if (candidate.source === "youtube") {
+  if (["youtube", "youtube-spike"].includes(candidate.source)) {
     const velocity = youtubeVelocity(candidate);
-    if (velocity.viewsPerHour < 750 && velocity.comments < 15) {
+    const spikeScore = Number(candidate.spike?.score || 0);
+    if (velocity.viewsPerHour < 750 && velocity.comments < 15 && spikeScore < config.trendThreshold) {
       reasons.push(`weak YouTube velocity (${Math.round(velocity.viewsPerHour)} views/hour, ${velocity.comments} comments)`);
     }
   }
@@ -525,6 +1306,17 @@ function candidateGate(candidate, state, config, now = new Date()) {
   };
 }
 
+function candidatePriority(candidate) {
+  if (isSpikeCandidate(candidate)) return 400;
+  if (candidate?.source === "espn-scoreboard" && candidate.type === "prediction") return 320;
+  if (candidate?.source === "espn-scoreboard" && candidate.type === "postmatch") return 310;
+  if (candidate?.source === "fixture-scheduler") return 300;
+  if (candidate?.source === "gemini-search-grounding") return 250;
+  if (candidate?.source === "youtube") return 220;
+  if (isFallbackCandidate(candidate)) return 100;
+  return 0;
+}
+
 function selectCandidate(candidates, state, config, now = new Date()) {
   const sorted = candidates
     .filter((candidate) => candidate?.topic)
@@ -532,7 +1324,7 @@ function selectCandidate(candidates, state, config, now = new Date()) {
       const enriched = { ...candidate, key: candidateKey(candidate), duplicate: wasDispatched(state, candidate, config) };
       return { ...enriched, gate: candidateGate(enriched, state, config, now) };
     })
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => candidatePriority(b) - candidatePriority(a) || b.score - a.score);
   const selected = sorted.find((candidate) => candidate.gate?.allowed);
   return { selected: selected || null, candidates: sorted };
 }
@@ -640,6 +1432,383 @@ function isTelegramCommandForThisController(config, message = {}) {
   return true;
 }
 
+function telegramCommandHelp(extra = "") {
+  return [
+    "World Cup commands:",
+    "/wc topic <topic> - create a viral pre-tournament/trend short",
+    "/wc pre <topic> - same as topic",
+    "/wc prediction Team A vs Team B | optional topic | optional kickoff ISO",
+    "/wc post Team A vs Team B | optional topic",
+    "/wc status - show controller status",
+    extra,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function isStructuredWorldCupCommand(text = "") {
+  return /^\/(?:wc|worldcup)(?:@\w+)?(?:\s|$)/i.test(cleanText(text));
+}
+
+function shouldTryIntentParser(text = "") {
+  const cleaned = cleanText(text);
+  return Boolean(cleaned && !cleaned.startsWith("/"));
+}
+
+function intentParserConfigured(config = {}) {
+  return Boolean(config.intentLlmEnabled && config.intentLlmUrl && cleanText(config.intentLlmProvider).toLowerCase() === "gemma-api");
+}
+
+function buildWorldCupIntentPrompt(text = "") {
+  return `
+Convert the user's Telegram message into strict JSON for a World Cup short-video controller.
+
+Allowed actions:
+- dispatch_specific: user gave a concrete topic, player, team, or match.
+- discover_and_dispatch: user wants the system to pick any currently trending World Cup topic.
+- status: user asks for controller status.
+- help: user asks how to use the bot.
+- clarify: request is too unclear or missing important details.
+
+Allowed type values: pre-tournament, prediction, postmatch, breaking-news.
+
+Return JSON only with this shape:
+{
+  "action": "dispatch_specific | discover_and_dispatch | status | help | clarify",
+  "type": "pre-tournament | prediction | postmatch | breaking-news",
+  "topic": "",
+  "teamA": "",
+  "teamB": "",
+  "kickoff": "",
+  "event": "",
+  "entity": "",
+  "selectionMode": "",
+  "needsTrendDiscovery": false,
+  "needsVerification": false,
+  "sourceHint": "",
+  "clarifyingQuestion": ""
+}
+
+Rules:
+- For "any trending topic", "latest topic", or similar broad requests, use action discover_and_dispatch and do not invent the topic.
+- For injuries, red cards, suspensions, lineups, controversies, or breaking news, use type breaking-news and needsVerification true.
+- For predictions, fill teamA and teamB when the user names both teams.
+- If the user is unclear, use action clarify with a short clarifyingQuestion.
+
+User message:
+${text}
+`.trim();
+}
+
+function extractFirstJsonObject(text = "") {
+  const cleaned = String(text || "").trim();
+  if (!cleaned) throw new Error("Intent LLM returned empty text.");
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start < 0 || end <= start) throw new Error("Intent LLM did not return JSON.");
+    return JSON.parse(cleaned.slice(start, end + 1));
+  }
+}
+
+function parseGemmaIntentPayload(payload) {
+  if (!payload) throw new Error("Intent LLM returned no payload.");
+  if (typeof payload === "string") return extractFirstJsonObject(payload);
+  if (typeof payload !== "object") throw new Error("Intent LLM returned an unsupported payload.");
+  const geminiParts = payload.candidates?.[0]?.content?.parts;
+  const candidates = [
+    payload.intent,
+    payload.json,
+    payload.output_json,
+    payload.output,
+    payload.response,
+    payload.text,
+    payload.choices?.[0]?.message?.content,
+    payload.choices?.[0]?.text,
+    Array.isArray(geminiParts) ? geminiParts.map((part) => part?.text).filter(Boolean).join("\n") : "",
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (typeof candidate === "object") return candidate;
+    if (typeof candidate === "string") return extractFirstJsonObject(candidate);
+  }
+  if (payload.action) return payload;
+  throw new Error("Intent LLM response did not contain an intent JSON object.");
+}
+
+async function requestGemmaIntent(config, text) {
+  if (!intentParserConfigured(config)) {
+    throw new Error("Missing Gemma intent parser config. Set WORLD_CUP_INTENT_LLM_ENABLED=true and WORLD_CUP_INTENT_LLM_URL.");
+  }
+  const prompt = buildWorldCupIntentPrompt(text);
+  const headers = { "Content-Type": "application/json" };
+  if (config.intentLlmApiKey) headers.Authorization = `Bearer ${config.intentLlmApiKey}`;
+  const body =
+    config.intentLlmApiStyle === "prompt"
+      ? {
+          model: config.intentLlmModel,
+          temperature: 0,
+          stream: false,
+          format: "json",
+          prompt,
+        }
+      : {
+          model: config.intentLlmModel,
+          temperature: 0,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "You return only strict JSON for a World Cup video-controller intent parser." },
+            { role: "user", content: prompt },
+          ],
+        };
+  const response = await fetchWithControllerTimeout(
+    config.intentLlmUrl,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    },
+    config.intentLlmTimeoutMs,
+  );
+  const textBody = await response.text().catch(() => "");
+  if (!response.ok) {
+    throw new Error(`Gemma intent parser failed: ${response.status} ${textBody.slice(0, 180)}`);
+  }
+  let payload = textBody;
+  try {
+    payload = textBody ? JSON.parse(textBody) : {};
+  } catch {
+    payload = textBody;
+  }
+  return validateWorldCupIntent(parseGemmaIntentPayload(payload), text);
+}
+
+function normalizeIntentAction(value = "") {
+  const cleaned = cleanText(value).toLowerCase().replace(/[\s-]+/g, "_");
+  const aliases = {
+    dispatch: "dispatch_specific",
+    specific: "dispatch_specific",
+    create: "dispatch_specific",
+    make_video: "dispatch_specific",
+    auto: "discover_and_dispatch",
+    trend: "discover_and_dispatch",
+    trending: "discover_and_dispatch",
+    discover: "discover_and_dispatch",
+    auto_trending: "discover_and_dispatch",
+  };
+  return aliases[cleaned] || cleaned;
+}
+
+function normalizeIntentType(value = "", fallback = "pre-tournament") {
+  const cleaned = cleanText(value).toLowerCase().replace(/[\s_]+/g, "-");
+  const aliases = {
+    pre: "pre-tournament",
+    trend: "pre-tournament",
+    viral: "pre-tournament",
+    post: "postmatch",
+    "post-match": "postmatch",
+    breaking: "breaking-news",
+    news: "breaking-news",
+  };
+  const normalized = aliases[cleaned] || cleaned || fallback;
+  return INTENT_TYPES.has(normalized) ? normalized : fallback;
+}
+
+function parseTeamsFromText(text = "") {
+  const match = cleanText(text).match(/^(.+?)\s+(?:vs|v|versus)\s+(.+?)$/i);
+  if (!match) return { teamA: "", teamB: "" };
+  return { teamA: cleanText(match[1]), teamB: cleanText(match[2]) };
+}
+
+function looksLikeAutoTrendRequest(text = "") {
+  const cleaned = cleanText(text).toLowerCase();
+  if (!cleaned) return false;
+  const wantsSystemChoice = /\b(any|auto|automatic|pick|choose|find|next|latest|trending|trend)\b/.test(cleaned);
+  const wantsVideoTopic = /\b(topic|video|short|reel|world cup|fifa|football)\b/.test(cleaned);
+  const hasSpecificMatch = /\b(?:vs|versus)\b/.test(cleaned);
+  return wantsSystemChoice && wantsVideoTopic && !hasSpecificMatch;
+}
+
+function autoTrendIntent() {
+  return {
+    action: "discover_and_dispatch",
+    type: "pre-tournament",
+    topic: "",
+    teamA: "",
+    teamB: "",
+    kickoff: "",
+    event: "",
+    entity: "",
+    selectionMode: "auto_trending",
+    needsTrendDiscovery: true,
+    needsVerification: false,
+    sourceHint: "",
+    clarifyingQuestion: "",
+  };
+}
+
+function invalidKickoffReason(kickoff = "") {
+  const cleaned = cleanText(kickoff);
+  if (!cleaned) return "";
+  return Number.isFinite(Date.parse(cleaned)) ? "" : "Kickoff must be a valid ISO-style date/time.";
+}
+
+function clarifyIntent(question) {
+  return {
+    action: "clarify",
+    type: "pre-tournament",
+    topic: "",
+    teamA: "",
+    teamB: "",
+    kickoff: "",
+    event: "",
+    entity: "",
+    selectionMode: "",
+    needsTrendDiscovery: false,
+    needsVerification: false,
+    sourceHint: "",
+    clarifyingQuestion: cleanText(question) || "Which World Cup topic, player, or match should I use?",
+  };
+}
+
+function validateWorldCupIntent(raw, sourceText = "") {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("Intent JSON must be an object.");
+  }
+  const action = normalizeIntentAction(raw.action || raw.intent || raw.intentAction);
+  if (!INTENT_ACTIONS.has(action)) {
+    throw new Error(`Unsupported intent action: ${cleanText(raw.action || raw.intent || raw.intentAction || "missing")}`);
+  }
+  if (action === "help" || action === "status") {
+    return {
+      ...clarifyIntent(""),
+      action,
+      clarifyingQuestion: "",
+    };
+  }
+  if (action === "clarify") {
+    return clarifyIntent(raw.clarifyingQuestion || raw.question || raw.message);
+  }
+
+  const rawEvent = cleanText(raw.event);
+  const breakingSignal = /\b(injur|red card|suspension|suspended|lineup|starting xi|ban|banned|controversy|breaking)\b/i.test(
+    `${sourceText} ${rawEvent} ${raw.topic || ""}`,
+  );
+  const type = normalizeIntentType(raw.type || raw.videoType, breakingSignal ? "breaking-news" : "pre-tournament");
+  const intent = {
+    action,
+    type,
+    topic: cleanText(raw.topic),
+    teamA: cleanText(raw.teamA || raw.team_a),
+    teamB: cleanText(raw.teamB || raw.team_b),
+    kickoff: cleanText(raw.kickoff),
+    event: rawEvent,
+    entity: cleanText(raw.entity || raw.player),
+    selectionMode: cleanText(raw.selectionMode || raw.selection_mode),
+    needsTrendDiscovery: action === "discover_and_dispatch" || boolArg(raw.needsTrendDiscovery ?? raw.needs_trend_discovery, false),
+    needsVerification: type === "breaking-news" || breakingSignal || boolArg(raw.needsVerification ?? raw.needs_verification, false),
+    sourceHint: cleanText(raw.sourceHint || raw.source || raw.url),
+    clarifyingQuestion: "",
+  };
+
+  const kickoffIssue = invalidKickoffReason(intent.kickoff);
+  if (kickoffIssue) return clarifyIntent(kickoffIssue);
+
+  if (action === "discover_and_dispatch") {
+    return {
+      ...autoTrendIntent(),
+      type: intent.type,
+      selectionMode: intent.selectionMode || "auto_trending",
+      sourceHint: intent.sourceHint,
+    };
+  }
+
+  const teamsFromTopic = parseTeamsFromText(intent.topic);
+  if (!intent.teamA && !intent.teamB && teamsFromTopic.teamA && teamsFromTopic.teamB && intent.type !== "pre-tournament") {
+    intent.teamA = teamsFromTopic.teamA;
+    intent.teamB = teamsFromTopic.teamB;
+  }
+  if (!intent.topic && intent.teamA && intent.teamB) {
+    intent.topic =
+      intent.type === "prediction"
+        ? `${intent.teamA} vs ${intent.teamB} World Cup prediction`
+        : intent.type === "postmatch"
+          ? `${intent.teamA} vs ${intent.teamB} post-match analysis: the moment that changed the game`
+          : `${intent.teamA} vs ${intent.teamB}: the pressure angle fans are already arguing about`;
+  }
+  if (!intent.topic) {
+    return clarifyIntent("Please give me a specific World Cup topic, player, or match.");
+  }
+  return intent;
+}
+
+function intentToWorldCupCommand(intent, sourceText = "") {
+  if (intent.action === "help") return { action: "help", help: telegramCommandHelp("Natural language is also supported when Gemma intent parsing is enabled.") };
+  if (intent.action === "status") return { action: "status", intent };
+  if (intent.action === "clarify") {
+    return {
+      action: "clarify",
+      message: intent.clarifyingQuestion || "Which World Cup topic, player, or match should I use?",
+      intent,
+    };
+  }
+  if (intent.action === "discover_and_dispatch") {
+    return { action: "discover_and_dispatch", intent };
+  }
+  if (intent.type === "breaking-news" || intent.needsVerification) {
+    return {
+      action: "blocked_verification",
+      intent,
+      message:
+        "I understood this as breaking news, but I need verified current sources before dispatching. Send a source link, or ask for any trending World Cup topic.",
+    };
+  }
+  const teamsFromTopic = parseTeamsFromText(intent.topic);
+  const teamA = intent.teamA || teamsFromTopic.teamA;
+  const teamB = intent.teamB || teamsFromTopic.teamB;
+  const type = normalizeIntentType(intent.type, "pre-tournament");
+  const topic = cleanText(intent.topic || sourceText);
+  return {
+    action: "dispatch",
+    intent,
+    candidate: {
+      type,
+      topic,
+      teamA,
+      teamB,
+      kickoff: intent.kickoff || "",
+      matchId: hashText(`telegram-intent:${type}:${topic}:${teamA}:${teamB}:${intent.kickoff || ""}`),
+      score: 100,
+      reason: "Manual Telegram natural-language command.",
+      source: "telegram-intent",
+      manual: true,
+    },
+  };
+}
+
+async function parseTelegramIntentCommand(config, text) {
+  if (!shouldTryIntentParser(text) || !config.intentLlmEnabled) return null;
+  if (!intentParserConfigured(config)) {
+    return {
+      action: "help",
+      help: telegramCommandHelp("Natural-language parsing is enabled, but WORLD_CUP_INTENT_LLM_URL is missing."),
+      intentError: "missing-intent-llm-config",
+    };
+  }
+  try {
+    const intent = await requestGemmaIntent(config, text);
+    return intentToWorldCupCommand(intent, text);
+  } catch (error) {
+    return {
+      action: "clarify",
+      message: `I could not turn that into a safe video request yet: ${error.message}`,
+      intentError: error.message,
+    };
+  }
+}
+
 function parseTelegramWorldCupCommand(text = "") {
   const cleaned = cleanText(text);
   const match = cleaned.match(/^\/(?:wc|worldcup)(?:@\w+)?(?:\s+([\s\S]+))?$/i);
@@ -648,17 +1817,13 @@ function parseTelegramWorldCupCommand(text = "") {
   if (!body || /^help$/i.test(body)) {
     return {
       action: "help",
-      help: [
-        "World Cup commands:",
-        "/wc topic <topic> - create a viral pre-tournament/trend short",
-        "/wc pre <topic> - same as topic",
-        "/wc prediction Team A vs Team B | optional topic | optional kickoff ISO",
-        "/wc post Team A vs Team B | optional topic",
-        "/wc status - show controller status",
-      ].join("\n"),
+      help: telegramCommandHelp(),
     };
   }
   if (/^status$/i.test(body)) return { action: "status" };
+  if (looksLikeAutoTrendRequest(body)) {
+    return { action: "discover_and_dispatch", intent: autoTrendIntent() };
+  }
   const parts = body.split("|").map(cleanText);
   const head = parts[0] || "";
   const headMatch = head.match(/^(topic|viral|trend|pre|pre-tournament|prediction|predict|post|postmatch)\s+([\s\S]+)$/i);
@@ -701,7 +1866,7 @@ function parseTelegramWorldCupCommand(text = "") {
   };
 }
 
-async function processTelegramCommands(config, state) {
+async function processTelegramCommands(config, state, db) {
   if (!config.telegramCommands || !config.telegramBotToken || !config.telegramChatId) return [];
   const updates = await telegramGetUpdates(config, Number(state.telegramUpdateOffset || 0)).catch((error) => {
     state.lastTelegramCommandError = error.message;
@@ -713,11 +1878,11 @@ async function processTelegramCommands(config, state) {
     const message = update.message || {};
     const text = cleanText(message.text || "");
     if (!text || !isTelegramCommandForThisController(config, message)) continue;
-    const command = parseTelegramWorldCupCommand(text);
+    const command = isStructuredWorldCupCommand(text) ? parseTelegramWorldCupCommand(text) : await parseTelegramIntentCommand(config, text);
     if (!command) continue;
     if (command.action === "help") {
       await sendTelegram(config, command.help).catch(() => null);
-      results.push({ action: "help", updateId: update.update_id });
+      results.push({ action: "help", updateId: update.update_id, intentError: command.intentError || "" });
       continue;
     }
     if (command.action === "status") {
@@ -734,6 +1899,30 @@ async function processTelegramCommands(config, state) {
       results.push({ action: "status", updateId: update.update_id });
       continue;
     }
+    if (command.action === "clarify") {
+      await sendTelegram(config, command.message || "Which World Cup topic, player, or match should I use?").catch(() => null);
+      results.push({ action: "clarify", updateId: update.update_id, intent: command.intent || null, intentError: command.intentError || "" });
+      continue;
+    }
+    if (command.action === "blocked_verification") {
+      state.lastStatus = "telegram_verification_blocked";
+      state.lastError = command.message;
+      await sendTelegram(config, command.message).catch(() => null);
+      results.push({ action: "blocked_verification", updateId: update.update_id, intent: command.intent || null });
+      continue;
+    }
+    if (command.action === "discover_and_dispatch") {
+      state.lastStatus = "telegram_discovery_requested";
+      state.lastTelegramDiscoveryRequest = {
+        updateId: update.update_id,
+        text,
+        intent: command.intent || null,
+        requestedAt: nowIso(),
+      };
+      await sendTelegram(config, "Got it. I will scan fixtures, YouTube velocity, and configured trend sources for the strongest World Cup topic now.").catch(() => null);
+      results.push({ action: "discover_and_dispatch", updateId: update.update_id, intent: command.intent || null });
+      continue;
+    }
     if (command.action !== "dispatch" || !command.candidate?.topic) continue;
     const selected = command.candidate;
     await sendTelegram(config, `Manual World Cup command received:\n${selected.topic}\nTriggering GitHub workflow...`).catch(() => null);
@@ -744,7 +1933,7 @@ async function processTelegramCommands(config, state) {
       markDispatched(state, selected, { ...dispatch, telegramUpdateId: update.update_id });
       state.lastStatus = "telegram_workflow_dispatched";
       state.lastDispatchAt = dispatch.dispatchedAt;
-      await writeJsonFile(config.stateFile, state);
+      persistControllerState(db, state);
       let workflowRun = null;
       for (let attempt = 0; attempt < 10 && !workflowRun; attempt += 1) {
         await sleep(10_000);
@@ -771,63 +1960,96 @@ async function processTelegramCommands(config, state) {
       await sendTelegram(config, `Manual World Cup command failed: ${error.message}`).catch(() => null);
     }
     markDispatched(state, selected, dispatch);
+    persistControllerState(db, state);
     results.push({ action: "dispatch", selected, dispatch, updateId: update.update_id });
   }
   return results;
 }
 
 async function runControllerOnce(config) {
-  const state = await readJsonFile(config.stateFile, { version: 1, dispatched: {}, scans: [] });
-  const commandResults = await processTelegramCommands(config, state);
+  const db = await openControllerDb(config);
+  try {
+  const state = await loadControllerState(config, db);
+  const commandResults = await processTelegramCommands(config, state, db);
+  const shouldRunDiscoveryAfterTelegramCommand = commandResults.some((result) => result.action === "discover_and_dispatch");
   if (commandResults.length) {
     state.lastTelegramCommandAt = nowIso();
-    await writeJsonFile(config.stateFile, state);
-    return { telegramCommands: commandResults, skipped: false };
+    persistControllerState(db, state);
+    if (!shouldRunDiscoveryAfterTelegramCommand) {
+      return { telegramCommands: commandResults, skipped: false };
+    }
   }
   const warnings = [];
   const now = new Date();
   state.lastStatus = "scanning";
   state.lastScanStartedAt = nowIso();
-  await writeJsonFile(config.stateFile, state);
-  const matchCandidates = configuredFixtures()
-    .map((fixture) => matchCandidateFromFixture(fixture, state, now, config))
-    .filter(Boolean);
-  const youtubeCandidates = config.offline ? [] : await buildYouTubeCandidates(config, warnings);
-  const geminiCandidate = config.offline || !config.enableGeminiTrends ? null : await buildGeminiTrendCandidate(warnings);
-  const rawCandidates = [...matchCandidates, ...youtubeCandidates, ...(geminiCandidate ? [geminiCandidate] : [])];
+  persistControllerState(db, state);
+  const matchCandidates = config.legacyTriggerEnabled
+    ? configuredFixtures()
+        .map((fixture) => matchCandidateFromFixture(fixture, state, now, config))
+        .filter(Boolean)
+    : [];
+  const espnCandidates = await buildEspnCandidates(config, state, db, warnings, now);
+  const youtubeSpikeCandidates = await buildYouTubeSpikeCandidates(config, db, warnings, now);
+  const youtubeCandidates = config.offline || !config.legacyTriggerEnabled ? [] : await buildYouTubeCandidates(config, warnings);
+  const geminiCandidate = config.offline || !config.legacyTriggerEnabled || !config.enableGeminiTrends ? null : await buildGeminiTrendCandidate(warnings);
+  const evergreenCandidate = buildEvergreenFallbackCandidate(state, config, now);
+  const rawCandidates = [
+    ...youtubeSpikeCandidates,
+    ...espnCandidates,
+    ...matchCandidates,
+    ...youtubeCandidates,
+    ...(geminiCandidate ? [geminiCandidate] : []),
+    ...(evergreenCandidate ? [evergreenCandidate] : []),
+  ];
   const { selected, candidates } = selectCandidate(rawCandidates, state, config, now);
   const scan = {
     scannedAt: nowIso(),
     selected,
     candidates: candidates.slice(0, 20),
     warnings,
+    diagnostics: {
+      dbFile: config.dbFile,
+      espnCandidates: espnCandidates.length,
+      fixtureCandidates: matchCandidates.length,
+      youtubeSpikeCandidates: youtubeSpikeCandidates.length,
+      youtubeCandidates: youtubeCandidates.length,
+      geminiTrendCandidate: Boolean(geminiCandidate),
+      evergreenCandidate: Boolean(evergreenCandidate),
+      legacyTriggerEnabled: config.legacyTriggerEnabled,
+      rawCandidateCount: rawCandidates.length,
+    },
     threshold: config.trendThreshold,
     dailyTotalLimit: config.dailyTotalLimit,
     dailyTrendLimit: config.dailyTrendLimit,
     trendCooldownMinutes: config.trendCooldownMinutes,
     dryRun: config.dryRun,
     offline: config.offline,
+    telegramCommands: commandResults,
   };
   state.scans = [scan, ...(state.scans || [])].slice(0, 200);
   let dispatch = null;
   if (!selected) {
     state.lastStatus = "skipped";
     state.lastScanCompletedAt = nowIso();
-    await writeJsonFile(config.stateFile, state);
+    recordScan(db, scan);
+    persistControllerState(db, state);
     const top = candidates[0] || null;
     const topReason = top?.gate?.reasons?.length ? ` Reason: ${top.gate.reasons.join("; ")}.` : "";
-    await sendTelegram(config, `World Cup controller checked trends: no candidate passed the strict gate. Top score: ${top?.score || 0}.${topReason}`).catch(() => null);
-    return { skipped: true, reason: "No candidate passed the strict dispatch gate.", scan };
+    const diagnosticText = ` Sources: ESPN ${espnCandidates.length}, YouTube spikes ${youtubeSpikeCandidates.length}, YouTube trends ${youtubeCandidates.length}, Gemini ${geminiCandidate ? 1 : 0}, fallback ${evergreenCandidate ? 1 : 0}.`;
+    await sendTelegram(config, `World Cup controller found no dispatchable candidate. Top score: ${top?.score || 0}.${topReason}${diagnosticText}`).catch(() => null);
+    return { telegramCommands: commandResults, skipped: true, reason: "No candidate passed the strict dispatch gate.", scan };
   }
   if (config.dryRun) {
     dispatch = { dryRun: true, inputs: workflowInputs(selected) };
     scan.dispatch = dispatch;
     state.lastStatus = "dry_run_selected";
     state.lastScanCompletedAt = nowIso();
-    await writeJsonFile(config.stateFile, state);
-    return { skipped: false, selected, dispatch, scan };
+    recordScan(db, scan);
+    persistControllerState(db, state);
+    return { telegramCommands: commandResults, skipped: false, selected, dispatch, scan };
   }
-  const selectedLabel = selected.source === "fixture-scheduler" ? "Scheduled match window" : "High-confidence trend";
+  const selectedLabel = isScheduledMatchCandidate(selected) ? "Scheduled match window" : isFallbackCandidate(selected) ? "Evergreen fallback" : "High-confidence trend";
   await sendTelegram(config, `${selectedLabel}: ${selected.topic}\nScore: ${selected.score}\nTriggering GitHub workflow...`).catch(() => null);
   const dispatchedAt = nowIso();
   try {
@@ -836,15 +2058,16 @@ async function runControllerOnce(config) {
     scan.dispatch = dispatch;
     state.lastStatus = "workflow_dispatched";
     state.lastDispatchAt = dispatch.dispatchedAt;
-    await writeJsonFile(config.stateFile, state);
+    persistControllerState(db, state);
   } catch (error) {
     dispatch = { error: error.message, attemptedAt: dispatchedAt, inputs: workflowInputs(selected) };
     scan.dispatch = dispatch;
     state.lastStatus = "dispatch_failed";
     state.lastError = error.message;
-    await writeJsonFile(config.stateFile, state);
+    recordScan(db, scan);
+    persistControllerState(db, state);
     await sendTelegram(config, `World Cup controller could not trigger GitHub: ${error.message}`).catch(() => null);
-    return { skipped: false, selected, dispatch, scan, error: error.message };
+    return { telegramCommands: commandResults, skipped: false, selected, dispatch, scan, error: error.message };
   }
   let workflowRun = null;
   try {
@@ -877,8 +2100,12 @@ async function runControllerOnce(config) {
   scan.dispatch = dispatch;
   state.lastStatus = dispatch.workflowRun?.conclusion === "success" ? "workflow_completed" : "workflow_finished";
   state.lastWorkflowCompletedAt = nowIso();
-  await writeJsonFile(config.stateFile, state);
-  return { skipped: false, selected, dispatch, scan };
+  recordScan(db, scan);
+  persistControllerState(db, state);
+  return { telegramCommands: commandResults, skipped: false, selected, dispatch, scan };
+  } finally {
+    db.close();
+  }
 }
 
 async function main() {
@@ -900,7 +2127,31 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(JSON.stringify({ error: error.message, code: "WORLD_CUP_AZURE_CONTROLLER_FAILED" }, null, 2));
-  process.exit(1);
-});
+export {
+  buildEvergreenFallbackCandidate,
+  candidateKey,
+  controllerConfig,
+  espnCandidateFromMatch,
+  initControllerDb,
+  intentToWorldCupCommand,
+  isVipMatch,
+  loadControllerState,
+  localYouTubeClusterCandidate,
+  normalizeEspnEvent,
+  openControllerDb,
+  parseGemmaIntentPayload,
+  parseTelegramIntentCommand,
+  parseTelegramWorldCupCommand,
+  persistControllerState,
+  selectCandidate,
+  validateWorldCupIntent,
+  workflowInputs,
+  youtubeSpikeMetrics,
+};
+
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch((error) => {
+    console.error(JSON.stringify({ error: error.message, code: "WORLD_CUP_AZURE_CONTROLLER_FAILED" }, null, 2));
+    process.exit(1);
+  });
+}

@@ -9,9 +9,10 @@
     "worldcup": "node worldcup/cli.mjs",
     "worldcup:dry": "node worldcup/cli.mjs --mode pre-tournament --topic \"World Cup chaos desk dry run\" --offline true --render false --upload false",
     "worldcup:controller": "node worldcup/azure-controller.mjs",
-    "worldcup:controller:dry": "node worldcup/azure-controller.mjs --once --dry-run --offline"
+    "worldcup:controller:dry": "node worldcup/azure-controller.mjs --once --dry-run --offline",
+    "worldcup:controller:test": "node --test worldcup/azure-controller.intent.test.mjs"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=24"
   }
 }

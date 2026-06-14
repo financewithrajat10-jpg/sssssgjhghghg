@@ -237,6 +237,16 @@ GitHub Actions:
 Azure/VM trend controller:
 
 - The controller does not render video. It watches match windows/trends, then triggers the GitHub Actions video factory through `workflow_dispatch`.
+- The controller requires Node 24+ because it uses Node's built-in SQLite runtime for persistent trigger state.
+- Before enabling live dispatch on Azure, verify that `WORLD_CUP_CONTROLLER_DB_FILE` is on persistent VM disk, not temporary storage:
+
+```bash
+node -v
+df -h
+readlink -f .tmp-worldcup
+```
+
+- Restart the VM once in dry-run mode and confirm the SQLite DB file still exists before enabling real dispatch.
 - Dry-run locally:
 
 ```bash
@@ -264,15 +274,41 @@ npm run worldcup:controller
   - `WORLD_CUP_WORKFLOW_FILE=worldcup-pipeline.yml`
   - `WORLD_CUP_CONTROLLER_INTERVAL_MINUTES=15`
   - `WORLD_CUP_TREND_THRESHOLD=95`
+  - `WORLD_CUP_CONTROLLER_DB_FILE=.tmp-worldcup/azure-controller-state.sqlite`
+  - `WORLD_CUP_ESPN_ENABLED=true` enables ESPN scoreboard match-window triggers.
+  - `WORLD_CUP_MATCH_LOOKAHEAD_DAYS=3`
+  - `WORLD_CUP_PREMATCH_WINDOW_HOURS=12,24`
+  - `WORLD_CUP_POSTMATCH_DELAY_MINUTES=20`
+  - `WORLD_CUP_VIP_TEAMS=Real Madrid|Barcelona|Manchester City|Arsenal|Bayern Munich|Liverpool|Paris Saint-Germain|Manchester United|Juventus|Inter Milan|Argentina|Portugal|France|Brazil|England|USA|USMNT|United States|Mexico|Canada`
+  - `WORLD_CUP_VIP_PLAYERS=Messi|Ronaldo|Mbappe|Haaland|Yamal|Bellingham|Vinicius|De Bruyne|Pulisic|Neymar`
+  - `WORLD_CUP_YOUTUBE_SPIKE_ENABLED=true` stores YouTube snapshots and compares scan-over-scan velocity.
+  - `WORLD_CUP_YOUTUBE_SCAN_MAX=150`
+  - `WORLD_CUP_YOUTUBE_SPIKE_INTERVAL_MINUTES=30`
+  - `WORLD_CUP_ANALYZER_MODEL=gemini-3.1-flash-lite` clusters repeated YouTube spike topics; set this to your Gemini 4-compatible model when available.
+  - `WORLD_CUP_EVERGREEN_FALLBACK=true` lets the controller dispatch a safe evergreen World Cup topic when no spike or match-window candidate passes.
   - `WORLD_CUP_CONTROLLER_ENABLE_GEMINI_TRENDS=false` keeps trend discovery on fixtures plus YouTube Data API. Set it to `true` only when you intentionally want to spend Gemini search-grounding quota.
+  - `WORLD_CUP_LEGACY_TRIGGER_ENABLED=false` keeps the old checked-in fixture/old YouTube/old Gemini trend finder dormant. Set to `true` only for rollback comparison.
   - `WORLD_CUP_CONTROLLER_TELEGRAM_COMMANDS=true` lets the VM listen for manual Telegram commands.
+  - `WORLD_CUP_INTENT_LLM_ENABLED=true` lets the Telegram controller parse natural-language text requests through a Gemma-compatible API.
+  - `WORLD_CUP_INTENT_LLM_PROVIDER=gemma-api`
+  - `WORLD_CUP_INTENT_LLM_URL=https://your-gemma-endpoint`
+  - `WORLD_CUP_INTENT_LLM_API_KEY=...` optional bearer token.
+  - `WORLD_CUP_INTENT_LLM_MODEL=gemma-4-31b-it`
+  - `WORLD_CUP_INTENT_LLM_API_STYLE=openai-chat` for OpenAI-compatible chat endpoints, or `prompt` for simple local prompt endpoints.
+  - `WORLD_CUP_INTENT_LLM_TIMEOUT_MS=15000`
   - `WORLD_CUP_FIXTURES_JSON=[{"date":"2026-06-12","teamA":"USA","teamB":"Paraguay","kickoff":"2026-06-13T02:00:00Z","topic":"USA vs Paraguay World Cup prediction"}]`
 - Prediction videos trigger when a fixture enters the 12-hour-before-kickoff window. Postmatch videos trigger after expected full-time plus a safety delay.
+- ESPN VIP matches now create the main pre-match and post-match candidates. YouTube spike scans and the analyzer run before match-window candidates, and evergreen fallback runs last so the controller does not silently starve on empty trend data. The selected candidate is sent to the existing `worldcup-pipeline.yml` `workflow_dispatch` inputs so GitHub Actions starts the same scraping, evidence, content, render, and upload pipeline.
 - Telegram manual dispatch commands:
   - `/wc topic Ronaldo vs Messi 2026 World Cup bracket`
   - `/wc prediction USA vs Paraguay | USA vs Paraguay pressure prediction | 2026-06-13T02:00:00Z`
   - `/wc post USA vs Paraguay | USA vs Paraguay post-match: the moment that changed the game`
   - `/wc status`
+- Telegram natural-language examples when the intent LLM is enabled:
+  - `Create a video on any trending World Cup topic`
+  - `Make a prediction video for USA vs Paraguay about pressure`
+  - `What is the controller status?`
+  - Breaking-news requests such as injuries or red cards are parsed, but blocked until a verified-source path is available.
 
 ## World Cup research mode
 
