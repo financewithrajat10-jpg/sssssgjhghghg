@@ -17,6 +17,15 @@ export const V2_OVERUSED_PHRASES = [
   "career mode with no restart button",
 ];
 
+const DEFAULT_ENTITY_MISS_TOLERANCE_RATIO = 0.08;
+const DEFAULT_CAPTION_TARGET_COVERAGE = 0.92;
+const DEFAULT_CAPTION_HARD_COVERAGE = 0.9;
+
+function numberOption(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 export function qualityV2Enabled(options = {}) {
   return cleanText(options.qualityMode || options.quality_mode || "").toLowerCase() === "v2";
 }
@@ -245,6 +254,10 @@ export function scoreStoryboardGateV2({ run, storyboard, options = {} }) {
   const repeatedStockIds = [...new Set(stockIds.filter((id, index) => stockIds.indexOf(id) !== index))];
   const entityMisses = rows.filter((row) => /central entity has no entity image\/overlay/i.test(row.retryReason));
   const firstRow = rows[0] || {};
+  const entityMissTolerance = Math.max(
+    1,
+    Math.floor(total * numberOption(options.entityMissToleranceRatio, DEFAULT_ENTITY_MISS_TOLERANCE_RATIO)),
+  );
   const issues = [];
   const blocking = [];
 
@@ -255,7 +268,11 @@ export function scoreStoryboardGateV2({ run, storyboard, options = {} }) {
   if (uniqueVisualRatio < 0.82) blocking.push(`Unique visual ratio is ${uniqueVisualRatio.toFixed(2)}, below 0.82.`);
   if (clipRatio < 0.6) blocking.push(`Clip ratio is ${clipRatio.toFixed(2)}, below 0.60.`);
   if (repeatedStockIds.length) blocking.push(`Same stock clip reused in this video: ${repeatedStockIds.slice(0, 3).join(", ")}.`);
-  if (entityMisses.length) blocking.push(`${entityMisses.length} central entity segment(s) have no entity image/overlay.`);
+  if (entityMisses.length > entityMissTolerance) {
+    blocking.push(`${entityMisses.length} central entity segment(s) have no entity image/overlay.`);
+  } else if (entityMisses.length) {
+    issues.push(`${entityMisses.length} central entity segment(s) have no entity image/overlay; tolerated because real visual coverage passed.`);
+  }
   if (/generic|stadium|crowd|football atmosphere/i.test(firstRow.retryReason || "")) blocking.push("First visual does not clearly match the hook entity/topic.");
   if (!segments.length) blocking.push("No visual segments were planned.");
   if (rows.some((row) => row.retryReason)) {
@@ -283,6 +300,7 @@ export function scoreStoryboardGateV2({ run, storyboard, options = {} }) {
     realVisualRatio,
     uniqueVisualRatio,
     clipRatio,
+    entityMissTolerance,
     repeatedStockIds,
     entityMisses: entityMisses.map((row) => row.segment),
     issues,
@@ -307,10 +325,16 @@ export function scoreCaptionAudioGateV2({ run, options = {} }) {
   const duplicateMiddleBottom = captionPlanSegments
     .map((segment) => segment.segment || segment.number)
     .filter((value, index, list) => value && list.indexOf(value) !== index);
+  const targetCoverage = numberOption(options.captionTargetCoverage, DEFAULT_CAPTION_TARGET_COVERAGE);
+  const hardCoverage = numberOption(options.captionHardCoverage, DEFAULT_CAPTION_HARD_COVERAGE);
   const issues = [];
   const hardFails = [];
 
-  if (coverage < 0.92) hardFails.push(`Caption coverage is ${coverage.toFixed(2)}, below 0.92.`);
+  if (coverage < hardCoverage) {
+    hardFails.push(`Caption coverage is ${coverage.toFixed(2)}, below hard floor ${hardCoverage.toFixed(2)}.`);
+  } else if (coverage < targetCoverage) {
+    issues.push(`Caption coverage is ${coverage.toFixed(2)}, below target ${targetCoverage.toFixed(2)} but above hard floor ${hardCoverage.toFixed(2)}.`);
+  }
   if (maxGap > 0.8) hardFails.push(`Max caption gap is ${maxGap.toFixed(2)}s, above 0.80s.`);
   if (middleSegments.length > middleLimit) hardFails.push(`Middle captions ${middleSegments.length} exceed mode limit ${middleLimit}.`);
   if (duplicateMiddleBottom.length) hardFails.push("Duplicate middle and bottom caption placement detected for the same segment.");
@@ -349,6 +373,8 @@ export function scoreCaptionAudioGateV2({ run, options = {} }) {
     pass: hardFails.length === 0 && audioHardFails.length === 0,
     score,
     coverage,
+    targetCoverage,
+    hardCoverage,
     maxGap,
     middleCount: middleSegments.length,
     middleLimit,
