@@ -803,6 +803,38 @@ export async function appendWorldCupUploadWarning(id, warning) {
   }
 }
 
+export function isTelegramOversizeError(error) {
+  const status = Number(error?.status || error?.details?.error_code || 0);
+  const code = cleanText(error?.code);
+  const description = cleanText(error?.details?.description || error?.message);
+  return code === "TELEGRAM_UPLOAD_FAILED" && status === 413 || /request entity too large|payload too large|file is too big/i.test(description);
+}
+
+async function uploadWorldCupRunAfterTelegramOversize(id, options = {}, originalError = null) {
+  const warning = `Telegram rejected MP4 as too large${originalError?.message ? `: ${originalError.message}` : "."}`;
+  if (hasGoogleDriveCredentials() && (process.env.GOOGLE_DRIVE_FOLDER_ID || process.env.WORLD_CUP_GOOGLE_DRIVE_FOLDER_ID)) {
+    await appendWorldCupUploadWarning(id, `${warning} Falling back to Google Drive.`);
+    const uploaded = await uploadWorldCupRunToDrive(id);
+    await sendWorldCupTelegramAlert(
+      uploaded,
+      `${worldCupTelegramCaption(uploaded)}\nTelegram rejected the MP4 as too large, so it was uploaded to Google Drive instead:\n${uploaded.drive?.folderUrl || ""}`.trim(),
+      "telegram-oversize-drive-fallback",
+    ).catch((error) => appendWorldCupUploadWarning(id, `Telegram Drive fallback notice failed: ${error.message}`));
+    return uploaded;
+  }
+  if (hasR2Credentials()) {
+    await appendWorldCupUploadWarning(id, `${warning} Falling back to R2.`);
+    const uploaded = await uploadWorldCupRunToR2(id);
+    await sendWorldCupTelegramAlert(
+      uploaded,
+      `${worldCupTelegramCaption(uploaded)}\nTelegram rejected the MP4 as too large, so it was uploaded to R2 instead:\n${uploaded.r2?.publicUrl || ""}`.trim(),
+      "telegram-oversize-r2-fallback",
+    ).catch((error) => appendWorldCupUploadWarning(id, `Telegram R2 fallback notice failed: ${error.message}`));
+    return uploaded;
+  }
+  throw originalError;
+}
+
 export async function uploadWorldCupRunToR2(id) {
   const run = await readWorldCupRun(id);
   const runDir = path.join(runsRoot, run.id);
@@ -980,7 +1012,14 @@ export async function uploadWorldCupRun(id, options = {}) {
     await assertWorldCupMp4Ready(await readWorldCupRun(id));
   }
   if (destination === "telegram" || destination === "tg" || destination === "telegram-bot") {
-    return await uploadWorldCupRunToTelegram(id, options);
+    try {
+      return await uploadWorldCupRunToTelegram(id, options);
+    } catch (error) {
+      if (isTelegramOversizeError(error)) {
+        return await uploadWorldCupRunAfterTelegramOversize(id, options, error);
+      }
+      throw error;
+    }
   }
   if (destination === "r2" || destination === "cloudflare-r2") {
     return await uploadWorldCupRunToR2(id);
