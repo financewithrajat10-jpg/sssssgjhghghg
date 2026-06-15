@@ -20,8 +20,21 @@ const DEFAULT_ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/spor
 const DEFAULT_MATCH_LOOKAHEAD_DAYS = 3;
 const DEFAULT_PREMATCH_WINDOW_HOURS = [12, 72];
 const DEFAULT_POSTMATCH_DELAY_MINUTES = 20;
-const DEFAULT_YOUTUBE_SCAN_MAX = 150;
-const DEFAULT_YOUTUBE_SPIKE_INTERVAL_MINUTES = 30;
+const DEFAULT_YOUTUBE_SCAN_MAX = 100;
+const DEFAULT_YOUTUBE_DISCOVERY_INTERVAL_MINUTES = 60;
+const DEFAULT_YOUTUBE_DISCOVERY_MAX_PER_RUN = 100;
+const DEFAULT_YOUTUBE_STATS_INTERVAL_MINUTES = 30;
+const DEFAULT_YOUTUBE_POOL_RETENTION_HOURS = 24;
+const DEFAULT_YOUTUBE_POOL_MAX = 2400;
+const DEFAULT_YOUTUBE_MIN_BASELINE_VIEWS = 1000;
+const DEFAULT_YOUTUBE_SPIKE_GROWTH_PERCENT = 100;
+const DEFAULT_YOUTUBE_SPIKE_MIN_DELTA_VIEWS = 1000;
+const DEFAULT_YOUTUBE_STRONG_DELTA_VIEWS = 10000;
+const DEFAULT_YOUTUBE_STRONG_DELTA_MIN_GROWTH_PERCENT = 50;
+const DEFAULT_YOUTUBE_TOPIC_MIN_SPIKE_VIDEOS = 10;
+const DEFAULT_YOUTUBE_TOPIC_MIN_CHANNELS = 4;
+const DEFAULT_YOUTUBE_TOPIC_MIN_CONFIDENCE = 75;
+const DEFAULT_YOUTUBE_DIAGNOSTIC_RETENTION_HOURS = 24;
 const DEFAULT_ANALYZER_MODEL = "gemini-3.1-flash-lite";
 const DEFAULT_SKIP_NOTICE_COOLDOWN_MINUTES = 180;
 const DUPLICATE_GATE_REASON = "duplicate candidate already dispatched";
@@ -40,17 +53,97 @@ const DEFAULT_VIP_TEAMS = [
   "Juventus",
   "Inter Milan",
   "Argentina",
+  "Algeria",
+  "Australia",
+  "Austria",
+  "Belgium",
   "Portugal",
   "France",
   "Brazil",
   "England",
+  "Spain",
+  "Germany",
+  "Netherlands",
+  "Croatia",
+  "Uruguay",
+  "Colombia",
+  "Italy",
+  "Morocco",
+  "Senegal",
+  "Ghana",
+  "Nigeria",
+  "Ivory Coast",
+  "Cote d'Ivoire",
+  "Egypt",
+  "South Africa",
+  "Cameroon",
+  "Japan",
+  "South Korea",
+  "Ecuador",
+  "Paraguay",
+  "Chile",
+  "Peru",
+  "Switzerland",
+  "Denmark",
+  "Sweden",
+  "Norway",
+  "Poland",
+  "Serbia",
+  "Turkey",
+  "Czechia",
+  "Costa Rica",
+  "Panama",
+  "New Zealand",
+  "Saudi Arabia",
+  "Iran",
+  "Qatar",
+  "Tunisia",
+  "Scotland",
+  "Wales",
+  "Cape Verde",
+  "Cabo Verde",
+  "Curacao",
   "USA",
   "USMNT",
   "United States",
   "Mexico",
   "Canada",
 ];
-const DEFAULT_VIP_PLAYERS = ["Messi", "Ronaldo", "Mbappe", "Haaland", "Yamal", "Bellingham", "Vinicius", "De Bruyne", "Pulisic", "Neymar"];
+const DEFAULT_VIP_PLAYERS = [
+  "Messi",
+  "Ronaldo",
+  "Mbappe",
+  "Haaland",
+  "Yamal",
+  "Bellingham",
+  "Vinicius",
+  "De Bruyne",
+  "Pulisic",
+  "Neymar",
+  "Kane",
+  "Saka",
+  "Foden",
+  "Palmer",
+  "Musiala",
+  "Wirtz",
+  "Kimmich",
+  "Havertz",
+  "Modric",
+  "Salah",
+  "Son",
+  "Lewandowski",
+  "Griezmann",
+  "Pedri",
+  "Gavi",
+  "Rodri",
+  "Morata",
+  "Valverde",
+  "Darwin Nunez",
+  "Luis Diaz",
+  "Davies",
+  "David",
+  "Reyna",
+];
 const MAJOR_TEAM_PATTERN = /\b(usa|usmnt|united states|mexico|canada|brazil|argentina|uruguay|colombia|england|france|spain|germany|portugal)\b/i;
 const RECOGNIZABLE_PLAYER_PATTERN = /\b(messi|ronaldo|neymar|mbappe|mbapp[eé]|pulisic|bellingham|vinicius|vin[ií]cius|modric|kane|yamal|musiala|haaland)\b/i;
 
@@ -137,6 +230,9 @@ function controllerConfig(args = {}) {
   const repo = cleanText(args.repo || process.env.WORLD_CUP_GITHUB_REPO || process.env.GITHUB_REPOSITORY || "financewithrajat10-jpg/Money-Printing-Machine");
   const [owner, repoName] = repo.split("/");
   const prematchWindowHours = prematchWindowArg(args.prematchWindowHours || process.env.WORLD_CUP_PREMATCH_WINDOW_HOURS);
+  const explicitYouTubeKeys = listArg(args.youtubeApiKeys || process.env.WORLD_CUP_YOUTUBE_API_KEYS || process.env.YOUTUBE_API_KEYS, []);
+  const primaryYouTubeKey = cleanText(process.env.YOUTUBE_API_KEY || process.env.GOOGLE_API_KEY || explicitYouTubeKeys[0] || "");
+  const youtubeApiKeys = [...new Set([...explicitYouTubeKeys, primaryYouTubeKey].map(cleanText).filter(Boolean))];
   return {
     owner,
     repo: repoName,
@@ -144,7 +240,8 @@ function controllerConfig(args = {}) {
     branch: cleanText(args.ref || args.branch || process.env.WORLD_CUP_GITHUB_REF || DEFAULT_BRANCH),
     workflowFile: cleanText(args.workflow || process.env.WORLD_CUP_WORKFLOW_FILE || DEFAULT_WORKFLOW_FILE),
     githubToken: cleanText(process.env.WORLD_CUP_GITHUB_TOKEN || process.env.GITHUB_FINE_GRAINED_PAT || process.env.GITHUB_TOKEN || ""),
-    youtubeApiKey: cleanText(process.env.YOUTUBE_API_KEY || process.env.GOOGLE_API_KEY || ""),
+    youtubeApiKey: primaryYouTubeKey,
+    youtubeApiKeys,
     trendThreshold: numberArg(args.trendThreshold || process.env.WORLD_CUP_TREND_THRESHOLD, DEFAULT_TREND_THRESHOLD),
     dailyTotalLimit: Math.max(1, numberArg(args.dailyTotalLimit || process.env.WORLD_CUP_CONTROLLER_DAILY_TOTAL_LIMIT, DEFAULT_DAILY_TOTAL_LIMIT)),
     dailyTrendLimit: Math.max(0, numberArg(args.dailyTrendLimit || process.env.WORLD_CUP_CONTROLLER_DAILY_TREND_LIMIT, DEFAULT_DAILY_TREND_LIMIT)),
@@ -174,7 +271,34 @@ function controllerConfig(args = {}) {
     vipPlayers: listArg(args.vipPlayers || process.env.WORLD_CUP_VIP_PLAYERS, DEFAULT_VIP_PLAYERS),
     youtubeSpikeEnabled: boolArg(args.youtubeSpikeEnabled ?? process.env.WORLD_CUP_YOUTUBE_SPIKE_ENABLED, true),
     youtubeScanMax: Math.max(1, numberArg(args.youtubeScanMax || process.env.WORLD_CUP_YOUTUBE_SCAN_MAX, DEFAULT_YOUTUBE_SCAN_MAX)),
-    youtubeSpikeIntervalMinutes: Math.max(1, numberArg(args.youtubeSpikeIntervalMinutes || process.env.WORLD_CUP_YOUTUBE_SPIKE_INTERVAL_MINUTES, DEFAULT_YOUTUBE_SPIKE_INTERVAL_MINUTES)),
+    youtubeDiscoveryEnabled: boolArg(args.youtubeDiscoveryEnabled ?? process.env.WORLD_CUP_YOUTUBE_DISCOVERY_ENABLED, true),
+    youtubeDiscoveryIntervalMinutes: Math.max(1, numberArg(args.youtubeDiscoveryIntervalMinutes || process.env.WORLD_CUP_YOUTUBE_DISCOVERY_INTERVAL_MINUTES, DEFAULT_YOUTUBE_DISCOVERY_INTERVAL_MINUTES)),
+    youtubeDiscoveryMaxPerRun: Math.max(
+      1,
+      numberArg(args.youtubeDiscoveryMaxPerRun || process.env.WORLD_CUP_YOUTUBE_DISCOVERY_MAX_PER_RUN || process.env.WORLD_CUP_YOUTUBE_SCAN_MAX, DEFAULT_YOUTUBE_DISCOVERY_MAX_PER_RUN),
+    ),
+    youtubeStatsIntervalMinutes: Math.max(
+      1,
+      numberArg(args.youtubeStatsIntervalMinutes || process.env.WORLD_CUP_YOUTUBE_STATS_INTERVAL_MINUTES || process.env.WORLD_CUP_YOUTUBE_SPIKE_INTERVAL_MINUTES, DEFAULT_YOUTUBE_STATS_INTERVAL_MINUTES),
+    ),
+    youtubePoolRetentionHours: Math.max(1, numberArg(args.youtubePoolRetentionHours || process.env.WORLD_CUP_YOUTUBE_POOL_RETENTION_HOURS, DEFAULT_YOUTUBE_POOL_RETENTION_HOURS)),
+    youtubePoolMax: Math.max(1, numberArg(args.youtubePoolMax || process.env.WORLD_CUP_YOUTUBE_POOL_MAX, DEFAULT_YOUTUBE_POOL_MAX)),
+    youtubeMinBaselineViews: Math.max(0, numberArg(args.youtubeMinBaselineViews || process.env.WORLD_CUP_YOUTUBE_MIN_BASELINE_VIEWS, DEFAULT_YOUTUBE_MIN_BASELINE_VIEWS)),
+    youtubeSpikeGrowthPercent: Math.max(0, numberArg(args.youtubeSpikeGrowthPercent || process.env.WORLD_CUP_YOUTUBE_SPIKE_GROWTH_PERCENT, DEFAULT_YOUTUBE_SPIKE_GROWTH_PERCENT)),
+    youtubeSpikeMinDeltaViews: Math.max(0, numberArg(args.youtubeSpikeMinDeltaViews || process.env.WORLD_CUP_YOUTUBE_SPIKE_MIN_DELTA_VIEWS, DEFAULT_YOUTUBE_SPIKE_MIN_DELTA_VIEWS)),
+    youtubeStrongDeltaViews: Math.max(0, numberArg(args.youtubeStrongDeltaViews || process.env.WORLD_CUP_YOUTUBE_STRONG_DELTA_VIEWS, DEFAULT_YOUTUBE_STRONG_DELTA_VIEWS)),
+    youtubeStrongDeltaMinGrowthPercent: Math.max(
+      0,
+      numberArg(args.youtubeStrongDeltaMinGrowthPercent || process.env.WORLD_CUP_YOUTUBE_STRONG_DELTA_MIN_GROWTH_PERCENT, DEFAULT_YOUTUBE_STRONG_DELTA_MIN_GROWTH_PERCENT),
+    ),
+    youtubeTopicMinSpikeVideos: Math.max(1, numberArg(args.youtubeTopicMinSpikeVideos || process.env.WORLD_CUP_YOUTUBE_TOPIC_MIN_SPIKE_VIDEOS, DEFAULT_YOUTUBE_TOPIC_MIN_SPIKE_VIDEOS)),
+    youtubeTopicMinChannels: Math.max(1, numberArg(args.youtubeTopicMinChannels || process.env.WORLD_CUP_YOUTUBE_TOPIC_MIN_CHANNELS, DEFAULT_YOUTUBE_TOPIC_MIN_CHANNELS)),
+    youtubeTopicMinConfidence: Math.max(0, Math.min(100, numberArg(args.youtubeTopicMinConfidence || process.env.WORLD_CUP_YOUTUBE_TOPIC_MIN_CONFIDENCE, DEFAULT_YOUTUBE_TOPIC_MIN_CONFIDENCE))),
+    youtubeClusterAnalyzer: cleanText(args.youtubeClusterAnalyzer || process.env.WORLD_CUP_YOUTUBE_CLUSTER_ANALYZER || "gemini").toLowerCase(),
+    youtubeDiagnosticRetentionHours: Math.max(
+      1,
+      numberArg(args.youtubeDiagnosticRetentionHours || process.env.WORLD_CUP_YOUTUBE_DIAGNOSTIC_RETENTION_HOURS, DEFAULT_YOUTUBE_DIAGNOSTIC_RETENTION_HOURS),
+    ),
     analyzerModel: cleanText(args.analyzerModel || process.env.WORLD_CUP_ANALYZER_MODEL || process.env.WORLD_CUP_SEARCH_MODEL || DEFAULT_ANALYZER_MODEL),
     evergreenFallback: boolArg(args.evergreenFallback ?? process.env.WORLD_CUP_EVERGREEN_FALLBACK, true),
     skipNoticeCooldownMinutes: Math.max(0, numberArg(args.skipNoticeCooldownMinutes || process.env.WORLD_CUP_CONTROLLER_SKIP_NOTICE_COOLDOWN_MINUTES, DEFAULT_SKIP_NOTICE_COOLDOWN_MINUTES)),
@@ -209,6 +333,15 @@ async function openControllerDb(config) {
   const db = new DatabaseSync(config.dbFile);
   initControllerDb(db);
   return db;
+}
+
+function sqliteColumns(db, table) {
+  return new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((column) => column.name));
+}
+
+function ensureSqliteColumn(db, table, column, definition) {
+  const columns = sqliteColumns(db, table);
+  if (!columns.has(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 function initControllerDb(db) {
@@ -267,10 +400,81 @@ function initControllerDb(db) {
       views INTEGER NOT NULL DEFAULT 0,
       comments INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS youtube_discovery_runs (
+      run_id TEXT PRIMARY KEY,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      status TEXT NOT NULL,
+      queries_json TEXT NOT NULL,
+      api_calls INTEGER NOT NULL DEFAULT 0,
+      videos_found INTEGER NOT NULL DEFAULT 0,
+      new_videos INTEGER NOT NULL DEFAULT 0,
+      duplicates INTEGER NOT NULL DEFAULT 0,
+      rejected_videos INTEGER NOT NULL DEFAULT 0,
+      error TEXT,
+      diagnostics_json TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS youtube_stats_runs (
+      run_id TEXT PRIMARY KEY,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      status TEXT NOT NULL,
+      active_pool_size INTEGER NOT NULL DEFAULT 0,
+      batches_requested INTEGER NOT NULL DEFAULT 0,
+      videos_updated INTEGER NOT NULL DEFAULT 0,
+      spike_eligible INTEGER NOT NULL DEFAULT 0,
+      rejected_spikes INTEGER NOT NULL DEFAULT 0,
+      api_calls INTEGER NOT NULL DEFAULT 0,
+      error TEXT,
+      diagnostics_json TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS youtube_spike_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      video_id TEXT NOT NULL,
+      detected_at TEXT NOT NULL,
+      title TEXT,
+      channel_title TEXT,
+      previous_views INTEGER NOT NULL DEFAULT 0,
+      current_views INTEGER NOT NULL DEFAULT 0,
+      delta_views INTEGER NOT NULL DEFAULT 0,
+      previous_comments INTEGER NOT NULL DEFAULT 0,
+      current_comments INTEGER NOT NULL DEFAULT 0,
+      delta_comments INTEGER NOT NULL DEFAULT 0,
+      growth_percent REAL NOT NULL DEFAULT 0,
+      eligible INTEGER NOT NULL DEFAULT 0,
+      rejection_reason TEXT,
+      metrics_json TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS youtube_topic_cluster_attempts (
+      run_id TEXT PRIMARY KEY,
+      attempted_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      input_count INTEGER NOT NULL DEFAULT 0,
+      cluster_count INTEGER NOT NULL DEFAULT 0,
+      strongest_size INTEGER NOT NULL DEFAULT 0,
+      strongest_channels INTEGER NOT NULL DEFAULT 0,
+      confidence REAL NOT NULL DEFAULT 0,
+      topic TEXT,
+      candidate_json TEXT,
+      response_json TEXT,
+      error TEXT
+    );
     CREATE INDEX IF NOT EXISTS idx_dispatched_day ON dispatched(dispatched_at);
     CREATE INDEX IF NOT EXISTS idx_scans_scanned_at ON scans(scanned_at);
     CREATE INDEX IF NOT EXISTS idx_youtube_snapshots_video ON youtube_snapshots(video_id, scanned_at);
+    CREATE INDEX IF NOT EXISTS idx_youtube_videos_published ON youtube_videos(published_at);
+    CREATE INDEX IF NOT EXISTS idx_youtube_videos_last_seen ON youtube_videos(last_seen_at);
+    CREATE INDEX IF NOT EXISTS idx_youtube_spike_events_detected ON youtube_spike_events(detected_at);
   `);
+  ensureSqliteColumn(db, "youtube_videos", "discovered_run_id", "TEXT");
+  ensureSqliteColumn(db, "youtube_videos", "last_stats_run_id", "TEXT");
+  ensureSqliteColumn(db, "youtube_videos", "last_delta_views", "INTEGER NOT NULL DEFAULT 0");
+  ensureSqliteColumn(db, "youtube_videos", "last_delta_comments", "INTEGER NOT NULL DEFAULT 0");
+  ensureSqliteColumn(db, "youtube_videos", "last_growth_percent", "REAL NOT NULL DEFAULT 0");
+  ensureSqliteColumn(db, "youtube_videos", "last_spike_eligible", "INTEGER NOT NULL DEFAULT 0");
+  ensureSqliteColumn(db, "youtube_videos", "last_rejection_reason", "TEXT");
+  ensureSqliteColumn(db, "youtube_videos", "active", "INTEGER NOT NULL DEFAULT 1");
 }
 
 function readMetaState(db) {
@@ -471,6 +675,213 @@ function recordYouTubeSnapshot(db, video, scannedAt = nowIso()) {
   return previous;
 }
 
+function latestRunAt(db, table, column = "started_at") {
+  return cleanText(db.prepare(`SELECT MAX(${column}) AS run_at FROM ${table}`).get()?.run_at);
+}
+
+function minutesSince(isoText, now = new Date()) {
+  const ms = Date.parse(isoText || "");
+  if (!Number.isFinite(ms)) return Infinity;
+  return (now.getTime() - ms) / 60000;
+}
+
+function shouldRunInterval(lastAt, intervalMinutes, now = new Date(), force = false) {
+  if (force) return true;
+  if (!lastAt) return true;
+  const elapsed = minutesSince(lastAt, now);
+  return !Number.isFinite(elapsed) || elapsed >= intervalMinutes;
+}
+
+function rollingCutoffIso(hours, now = new Date()) {
+  return new Date(now.getTime() - Math.max(1, Number(hours || 1)) * 60 * 60 * 1000).toISOString();
+}
+
+function pruneYouTubeDiagnostics(db, config, now = new Date()) {
+  const poolCutoff = rollingCutoffIso(config.youtubePoolRetentionHours, now);
+  const diagnosticCutoff = rollingCutoffIso(config.youtubeDiagnosticRetentionHours, now);
+  db.prepare("UPDATE youtube_videos SET active = 0 WHERE COALESCE(published_at, first_seen_at) < ?").run(poolCutoff);
+  db.prepare("DELETE FROM youtube_snapshots WHERE scanned_at < ?").run(diagnosticCutoff);
+  db.prepare("DELETE FROM youtube_spike_events WHERE detected_at < ?").run(diagnosticCutoff);
+  db.prepare("DELETE FROM youtube_discovery_runs WHERE started_at < ?").run(diagnosticCutoff);
+  db.prepare("DELETE FROM youtube_stats_runs WHERE started_at < ?").run(diagnosticCutoff);
+  db.prepare("DELETE FROM youtube_topic_cluster_attempts WHERE attempted_at < ?").run(diagnosticCutoff);
+  db.prepare("DELETE FROM youtube_videos WHERE active = 0 AND last_seen_at < ?").run(diagnosticCutoff);
+}
+
+function activeYouTubePoolRows(db, config, now = new Date()) {
+  const cutoff = rollingCutoffIso(config.youtubePoolRetentionHours, now);
+  return db
+    .prepare(
+      `SELECT video_id, title, channel_title, published_at, query, first_seen_at, last_seen_at, last_views, last_comments
+       FROM youtube_videos
+       WHERE active = 1
+         AND COALESCE(published_at, first_seen_at) >= ?
+       ORDER BY datetime(COALESCE(published_at, first_seen_at)) DESC, datetime(first_seen_at) DESC
+       LIMIT ?`,
+    )
+    .all(cutoff, Math.max(1, Number(config.youtubePoolMax || DEFAULT_YOUTUBE_POOL_MAX)));
+}
+
+function enforceYouTubePoolCap(db, config, now = new Date()) {
+  const cutoff = rollingCutoffIso(config.youtubePoolRetentionHours, now);
+  db.prepare(
+    `UPDATE youtube_videos
+     SET active = 0
+     WHERE video_id NOT IN (
+       SELECT video_id
+       FROM youtube_videos
+       WHERE COALESCE(published_at, first_seen_at) >= ?
+       ORDER BY datetime(COALESCE(published_at, first_seen_at)) DESC, datetime(first_seen_at) DESC
+       LIMIT ?
+     )`,
+  ).run(cutoff, Math.max(1, Number(config.youtubePoolMax || DEFAULT_YOUTUBE_POOL_MAX)));
+}
+
+function upsertDiscoveredYouTubeVideo(db, video, runId, discoveredAt = nowIso()) {
+  const existing = db.prepare("SELECT video_id FROM youtube_videos WHERE video_id = ?").get(video.id);
+  db.prepare(`
+    INSERT INTO youtube_videos(video_id, title, channel_title, published_at, query, first_seen_at, last_seen_at, last_views, last_comments, snapshot_json, discovered_run_id, active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, 1)
+    ON CONFLICT(video_id) DO UPDATE SET
+      title = excluded.title,
+      channel_title = excluded.channel_title,
+      published_at = excluded.published_at,
+      query = excluded.query,
+      last_seen_at = excluded.last_seen_at,
+      snapshot_json = excluded.snapshot_json,
+      active = 1
+  `).run(
+    video.id,
+    cleanText(video.title),
+    cleanText(video.channelTitle),
+    cleanText(video.publishedAt),
+    cleanText(video.query),
+    discoveredAt,
+    discoveredAt,
+    jsonText(video),
+    cleanText(runId),
+  );
+  return !existing;
+}
+
+function recordDiscoveryRun(db, summary = {}) {
+  db.prepare(`
+    INSERT OR REPLACE INTO youtube_discovery_runs(run_id, started_at, completed_at, status, queries_json, api_calls, videos_found, new_videos, duplicates, rejected_videos, error, diagnostics_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    cleanText(summary.runId),
+    cleanText(summary.startedAt),
+    cleanText(summary.completedAt),
+    cleanText(summary.status || "success"),
+    jsonText(summary.queries || []),
+    Number(summary.apiCalls || 0),
+    Number(summary.videosFound || 0),
+    Number(summary.newVideos || 0),
+    Number(summary.duplicates || 0),
+    Number(summary.rejectedVideos || 0),
+    cleanText(summary.error),
+    jsonText(summary),
+  );
+}
+
+function recordStatsRun(db, summary = {}) {
+  db.prepare(`
+    INSERT OR REPLACE INTO youtube_stats_runs(run_id, started_at, completed_at, status, active_pool_size, batches_requested, videos_updated, spike_eligible, rejected_spikes, api_calls, error, diagnostics_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    cleanText(summary.runId),
+    cleanText(summary.startedAt),
+    cleanText(summary.completedAt),
+    cleanText(summary.status || "success"),
+    Number(summary.activePoolSize || 0),
+    Number(summary.batchesRequested || 0),
+    Number(summary.videosUpdated || 0),
+    Number(summary.spikeEligible || 0),
+    Number(summary.rejectedSpikes || 0),
+    Number(summary.apiCalls || 0),
+    cleanText(summary.error),
+    jsonText(summary),
+  );
+}
+
+function recordSpikeEvent(db, runId, video, previous, metrics, detectedAt = nowIso()) {
+  db.prepare(`
+    INSERT INTO youtube_spike_events(
+      run_id, video_id, detected_at, title, channel_title, previous_views, current_views, delta_views,
+      previous_comments, current_comments, delta_comments, growth_percent, eligible, rejection_reason, metrics_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    cleanText(runId),
+    cleanText(video.id),
+    detectedAt,
+    cleanText(video.title),
+    cleanText(video.channelTitle),
+    Number(previous?.views || 0),
+    Number(video.views || 0),
+    Number(metrics.deltaViews || 0),
+    Number(previous?.comments || 0),
+    Number(video.comments || 0),
+    Number(metrics.deltaComments || 0),
+    Number(metrics.growthPercent || 0),
+    metrics.eligible ? 1 : 0,
+    cleanText(metrics.rejectionReason),
+    jsonText(metrics),
+  );
+}
+
+function recordYouTubeStatsSnapshot(db, video, previous, metrics, runId, scannedAt = nowIso()) {
+  db.prepare(`
+    UPDATE youtube_videos
+    SET title = ?, channel_title = ?, published_at = ?, last_seen_at = ?, last_views = ?, last_comments = ?,
+        snapshot_json = ?, last_stats_run_id = ?, last_delta_views = ?, last_delta_comments = ?,
+        last_growth_percent = ?, last_spike_eligible = ?, last_rejection_reason = ?, active = 1
+    WHERE video_id = ?
+  `).run(
+    cleanText(video.title),
+    cleanText(video.channelTitle),
+    cleanText(video.publishedAt),
+    scannedAt,
+    Number(video.views || 0),
+    Number(video.comments || 0),
+    jsonText(video),
+    cleanText(runId),
+    Number(metrics.deltaViews || 0),
+    Number(metrics.deltaComments || 0),
+    Number(metrics.growthPercent || 0),
+    metrics.eligible ? 1 : 0,
+    cleanText(metrics.rejectionReason),
+    cleanText(video.id),
+  );
+  db.prepare("INSERT INTO youtube_snapshots(video_id, scanned_at, query, views, comments) VALUES (?, ?, ?, ?, ?)").run(
+    video.id,
+    scannedAt,
+    cleanText(video.query),
+    Number(video.views || 0),
+    Number(video.comments || 0),
+  );
+  recordSpikeEvent(db, runId, video, previous, metrics, scannedAt);
+}
+
+function recentEligibleSpikeVideos(db, config, now = new Date()) {
+  const cutoff = new Date(now.getTime() - Math.max(1, Number(config.youtubeStatsIntervalMinutes || DEFAULT_YOUTUBE_STATS_INTERVAL_MINUTES) + 5) * 60 * 1000).toISOString();
+  return db
+    .prepare(
+      `SELECT video_id AS id, title, channel_title AS channelTitle, current_views AS views, current_comments AS comments,
+              previous_views AS previousViews, previous_comments AS previousComments, delta_views AS deltaViews,
+              delta_comments AS deltaComments, growth_percent AS growthPercent, metrics_json AS metricsJson
+       FROM youtube_spike_events
+       WHERE eligible = 1 AND detected_at >= ?
+       ORDER BY growth_percent DESC, delta_views DESC
+       LIMIT 200`,
+    )
+    .all(cutoff)
+    .map((row) => ({
+      ...row,
+      spike: { ...safeJsonParse(row.metricsJson, {}), score: Number(safeJsonParse(row.metricsJson, {})?.score || 0) },
+    }));
+}
+
 function candidateKey(candidate) {
   return hashText(`${candidate.type}:${candidate.topic}:${candidate.teamA || ""}:${candidate.teamB || ""}:${candidate.kickoff || ""}`);
 }
@@ -513,7 +924,9 @@ function candidateText(candidate) {
 }
 
 function isMajorTeamName(value) {
-  return MAJOR_TEAM_PATTERN.test(cleanText(value));
+  const comparable = normalizeTeamComparable(value);
+  if (!comparable) return false;
+  return DEFAULT_VIP_TEAMS.some((team) => teamMatchesVip(comparable, team));
 }
 
 function fixtureIsPriority(fixture) {
@@ -626,6 +1039,8 @@ function normalizeEspnEvent(event = {}) {
 
 function normalizeTeamComparable(value = "") {
   return cleanText(value)
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
     .toLowerCase()
     .replace(/&/g, "and")
     .replace(/\b(?:fc|sc|cf|afc|the)\b/g, "")
@@ -636,6 +1051,13 @@ function normalizeTeamComparable(value = "") {
 
 function regexEscape(text = "") {
   return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function textMentionsVipEntity(text = "", entity = "") {
+  const comparableText = normalizeTeamComparable(text);
+  const comparableEntity = normalizeTeamComparable(entity);
+  if (!comparableText || !comparableEntity) return false;
+  return new RegExp(`(?:^|\\s)${regexEscape(comparableEntity)}(?:$|\\s)`, "i").test(comparableText);
 }
 
 function teamMatchesVip(teamName = "", vipTeam = "") {
@@ -654,11 +1076,14 @@ function textHasVipPlayer(text = "", player = "") {
 
 function isVipMatch(match = {}, config = {}) {
   const teams = [match.home, match.away].map(cleanText).filter(Boolean);
-  for (const team of config.vipTeams || DEFAULT_VIP_TEAMS) {
+  if (teams.some(isMajorTeamName)) return true;
+  const vipTeams = [...new Set([...(config.vipTeams || []), ...DEFAULT_VIP_TEAMS])];
+  for (const team of vipTeams) {
     if (teams.some((teamName) => teamMatchesVip(teamName, team))) return true;
   }
   const haystack = cleanText(`${match.home || ""} ${match.away || ""} ${match.name || ""}`);
-  for (const player of config.vipPlayers || DEFAULT_VIP_PLAYERS) {
+  const vipPlayers = [...new Set([...(config.vipPlayers || []), ...DEFAULT_VIP_PLAYERS])];
+  for (const player of vipPlayers) {
     if (textHasVipPlayer(haystack, player)) return true;
   }
   return false;
@@ -757,6 +1182,14 @@ async function fetchWithControllerTimeout(url, options = {}, timeoutMs = DEFAULT
   }
 }
 
+function youtubeKeyList(config = {}) {
+  return [...new Set([...(config.youtubeApiKeys || []), config.youtubeApiKey].map(cleanText).filter(Boolean))];
+}
+
+function isYouTubeKeyRetryableError(error) {
+  return /YouTube .* failed: (400|403|429)\b|quota|rateLimit|dailyLimitExceeded|keyInvalid|API key not valid/i.test(error?.message || "");
+}
+
 async function youtubeSearch(config, query, options = {}) {
   if (!config.youtubeApiKey) return [];
   const maxResults = Math.max(1, Math.min(50, Number(options.maxResults || 8)));
@@ -771,7 +1204,10 @@ async function youtubeSearch(config, query, options = {}) {
   searchUrl.searchParams.set("publishedAfter", publishedAfter);
   searchUrl.searchParams.set("key", config.youtubeApiKey);
   const searchResponse = await fetchWithControllerTimeout(searchUrl, {}, config.fetchTimeoutMs);
-  if (!searchResponse.ok) throw new Error(`YouTube search failed: ${searchResponse.status}`);
+  if (!searchResponse.ok) {
+    const detail = cleanText(await searchResponse.text().catch(() => "")).slice(0, 240);
+    throw new Error(`YouTube search failed: ${searchResponse.status}${detail ? ` ${detail}` : ""}`);
+  }
   const searchJson = await searchResponse.json();
   const ids = (searchJson.items || []).map((item) => item.id?.videoId).filter(Boolean);
   if (!ids.length) return [];
@@ -780,7 +1216,10 @@ async function youtubeSearch(config, query, options = {}) {
   statsUrl.searchParams.set("id", ids.join(","));
   statsUrl.searchParams.set("key", config.youtubeApiKey);
   const statsResponse = await fetchWithControllerTimeout(statsUrl, {}, config.fetchTimeoutMs);
-  if (!statsResponse.ok) throw new Error(`YouTube stats failed: ${statsResponse.status}`);
+  if (!statsResponse.ok) {
+    const detail = cleanText(await statsResponse.text().catch(() => "")).slice(0, 240);
+    throw new Error(`YouTube stats failed: ${statsResponse.status}${detail ? ` ${detail}` : ""}`);
+  }
   const statsJson = await statsResponse.json();
   return (statsJson.items || []).map((item) => ({
     id: item.id,
@@ -793,12 +1232,135 @@ async function youtubeSearch(config, query, options = {}) {
   }));
 }
 
+async function youtubeSearchWithKeyFallback(config, query, options = {}, warnings = []) {
+  const keys = youtubeKeyList(config);
+  if (!keys.length) return [];
+  const startIndex = Math.max(0, Number(options.keyIndex || 0)) % keys.length;
+  let lastError = null;
+  for (let offset = 0; offset < keys.length; offset += 1) {
+    const keyIndex = (startIndex + offset) % keys.length;
+    try {
+      return await youtubeSearch({ ...config, youtubeApiKey: keys[keyIndex] }, query, options);
+    } catch (error) {
+      lastError = error;
+      if (keys.length <= 1 || !isYouTubeKeyRetryableError(error)) throw error;
+      warnings.push(`YouTube key slot ${keyIndex + 1}/${keys.length} failed for "${query}": ${cleanText(error.message).slice(0, 180)}.`);
+    }
+  }
+  throw lastError || new Error("YouTube search failed for all configured key slots.");
+}
+
+async function youtubeDiscoverySearch(config, query, options = {}) {
+  if (!config.youtubeApiKey) return { videos: [], nextPageToken: "" };
+  const maxResults = Math.max(1, Math.min(50, Number(options.maxResults || 50)));
+  const publishedAfterHours = Math.max(1, Number(options.publishedAfterHours || config.youtubePoolRetentionHours || DEFAULT_YOUTUBE_POOL_RETENTION_HOURS));
+  const publishedAfter = new Date((options.now || new Date()).getTime() - publishedAfterHours * 60 * 60 * 1000).toISOString();
+  const searchUrl = new URL("https://www.googleapis.com/youtube/v3/search");
+  searchUrl.searchParams.set("part", "snippet");
+  searchUrl.searchParams.set("type", "video");
+  searchUrl.searchParams.set("maxResults", String(maxResults));
+  searchUrl.searchParams.set("order", "date");
+  searchUrl.searchParams.set("q", query);
+  searchUrl.searchParams.set("publishedAfter", publishedAfter);
+  if (options.pageToken) searchUrl.searchParams.set("pageToken", options.pageToken);
+  searchUrl.searchParams.set("key", config.youtubeApiKey);
+  const response = await fetchWithControllerTimeout(searchUrl, {}, config.fetchTimeoutMs);
+  if (!response.ok) {
+    const detail = cleanText(await response.text().catch(() => "")).slice(0, 240);
+    throw new Error(`YouTube discovery failed: ${response.status}${detail ? ` ${detail}` : ""}`);
+  }
+  const json = await response.json();
+  return {
+    videos: (json.items || [])
+      .map((item) => ({
+        id: item.id?.videoId,
+        title: cleanText(item.snippet?.title),
+        channelTitle: cleanText(item.snippet?.channelTitle),
+        publishedAt: item.snippet?.publishedAt,
+        query,
+      }))
+      .filter((video) => video.id && video.title),
+    nextPageToken: cleanText(json.nextPageToken),
+  };
+}
+
+async function youtubeDiscoverySearchWithKeyFallback(config, query, options = {}, warnings = []) {
+  const keys = youtubeKeyList(config);
+  if (!keys.length) return { videos: [], nextPageToken: "" };
+  const startIndex = Math.max(0, Number(options.keyIndex || 0)) % keys.length;
+  let lastError = null;
+  for (let offset = 0; offset < keys.length; offset += 1) {
+    const keyIndex = (startIndex + offset) % keys.length;
+    try {
+      return await youtubeDiscoverySearch({ ...config, youtubeApiKey: keys[keyIndex] }, query, options);
+    } catch (error) {
+      lastError = error;
+      if (keys.length <= 1 || !isYouTubeKeyRetryableError(error)) throw error;
+      warnings.push(`YouTube discovery key slot ${keyIndex + 1}/${keys.length} failed for "${query}": ${cleanText(error.message).slice(0, 180)}.`);
+    }
+  }
+  throw lastError || new Error("YouTube discovery failed for all configured key slots.");
+}
+
+async function youtubeVideosList(config, ids = [], options = {}) {
+  if (!config.youtubeApiKey || !ids.length) return [];
+  const statsUrl = new URL("https://www.googleapis.com/youtube/v3/videos");
+  statsUrl.searchParams.set("part", "snippet,statistics");
+  statsUrl.searchParams.set("id", ids.slice(0, 50).join(","));
+  statsUrl.searchParams.set("key", config.youtubeApiKey);
+  const response = await fetchWithControllerTimeout(statsUrl, {}, config.fetchTimeoutMs);
+  if (!response.ok) {
+    const detail = cleanText(await response.text().catch(() => "")).slice(0, 240);
+    throw new Error(`YouTube stats failed: ${response.status}${detail ? ` ${detail}` : ""}`);
+  }
+  const json = await response.json();
+  return (json.items || []).map((item) => ({
+    id: item.id,
+    title: cleanText(item.snippet?.title),
+    channelTitle: cleanText(item.snippet?.channelTitle),
+    publishedAt: item.snippet?.publishedAt,
+    views: Number(item.statistics?.viewCount || 0),
+    comments: Number(item.statistics?.commentCount || 0),
+    query: cleanText(options.query),
+  }));
+}
+
+async function youtubeVideosListWithKeyFallback(config, ids = [], options = {}, warnings = []) {
+  const keys = youtubeKeyList(config);
+  if (!keys.length || !ids.length) return [];
+  const startIndex = Math.max(0, Number(options.keyIndex || 0)) % keys.length;
+  let lastError = null;
+  for (let offset = 0; offset < keys.length; offset += 1) {
+    const keyIndex = (startIndex + offset) % keys.length;
+    try {
+      return await youtubeVideosList({ ...config, youtubeApiKey: keys[keyIndex] }, ids, options);
+    } catch (error) {
+      lastError = error;
+      if (keys.length <= 1 || !isYouTubeKeyRetryableError(error)) throw error;
+      warnings.push(`YouTube stats key slot ${keyIndex + 1}/${keys.length} failed: ${cleanText(error.message).slice(0, 180)}.`);
+    }
+  }
+  throw lastError || new Error("YouTube stats failed for all configured key slots.");
+}
+
+function chunkArray(items = [], size = 50) {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
+  return chunks;
+}
+
 function scoreYouTubeVideo(video) {
   const ageHours = Math.max(0.25, (Date.now() - Date.parse(video.publishedAt || nowIso())) / 36e5);
   const viewVelocity = video.views / ageHours;
   const velocityScore = Math.min(30, Math.log10(viewVelocity + 1) * 8);
   const commentScore = Math.min(15, Math.log10(video.comments + 1) * 6);
-  const recognizability = /messi|ronaldo|usa|usmnt|brazil|argentina|england|france|spain|germany|portugal|mexico|world cup/i.test(video.title) ? 15 : 8;
+  const recognizedEntity =
+    /world cup/i.test(video.title) ||
+    MAJOR_TEAM_PATTERN.test(normalizeTeamComparable(video.title)) ||
+    RECOGNIZABLE_PLAYER_PATTERN.test(video.title) ||
+    DEFAULT_VIP_TEAMS.some((team) => textMentionsVipEntity(video.title, team)) ||
+    DEFAULT_VIP_PLAYERS.some((player) => textMentionsVipEntity(video.title, player));
+  const recognizability = recognizedEntity ? 15 : 8;
   const debate = /vs|prediction|shock|why|problem|pressure|controversy|lineup|injury|reaction/i.test(video.title) ? 15 : 6;
   const freshness = ageHours <= 2 ? 15 : ageHours <= 4 ? 10 : 5;
   return Math.round(Math.min(100, velocityScore + commentScore + recognizability + debate + freshness + 10));
@@ -825,7 +1387,11 @@ function rejectedYouTubeTrendReason(video) {
   }
   const entityPattern =
     /\b(usa|usmnt|paraguay|mexico|south africa|korea|czechia|czech republic|canada|brazil|argentina|uruguay|colombia|england|france|spain|germany|portugal|messi|ronaldo|neymar|mbappe|pulisic|bellingham|shakira|opening ceremony|fixture|schedule|lineup|injury|prediction|highlights?)\b/i;
-  if (!entityPattern.test(video.title || "")) {
+  const hasRecognizableEntity =
+    entityPattern.test(video.title || "") ||
+    DEFAULT_VIP_TEAMS.some((team) => textMentionsVipEntity(video.title, team)) ||
+    DEFAULT_VIP_PLAYERS.some((player) => textMentionsVipEntity(video.title, player));
+  if (!hasRecognizableEntity) {
     return "generic football hashtag without a strong entity";
   }
   if (/^#|#football|#worldcup/i.test(title) && title.split(/\s+/).length < 8) {
@@ -866,9 +1432,11 @@ function topicFromYouTubeVideo(video) {
 async function buildYouTubeCandidates(config, warnings) {
   const all = [];
   const seenVideoIds = new Set();
-  for (const query of youtubeQueries()) {
+  const queries = youtubeQueries();
+  for (let queryIndex = 0; queryIndex < queries.length; queryIndex += 1) {
+    const query = queries[queryIndex];
     try {
-      const videos = await youtubeSearch(config, query);
+      const videos = await youtubeSearchWithKeyFallback(config, query, { keyIndex: queryIndex }, warnings);
       for (const video of videos) {
         if (seenVideoIds.has(video.id)) continue;
         seenVideoIds.add(video.id);
@@ -895,6 +1463,207 @@ async function buildYouTubeCandidates(config, warnings) {
     }
   }
   return all;
+}
+
+function rotateQueriesForDiscovery(queries = [], maxCalls = 2, now = new Date()) {
+  const cleanQueries = queries.map(cleanText).filter(Boolean);
+  if (!cleanQueries.length) return [];
+  const slots = Math.max(1, Math.min(2, Number(maxCalls || 2)));
+  const hourIndex = Math.floor(now.getTime() / 3600000);
+  const start = (hourIndex * slots) % cleanQueries.length;
+  const selected = [];
+  for (let offset = 0; offset < Math.min(slots, cleanQueries.length); offset += 1) {
+    selected.push(cleanQueries[(start + offset) % cleanQueries.length]);
+  }
+  return selected;
+}
+
+async function runYouTubeDiscoveryIfDue(config, db, warnings, now = new Date()) {
+  const startedAt = now.toISOString();
+  const summary = {
+    ran: false,
+    runId: `yt-discovery-${hashText(startedAt).slice(0, 12)}`,
+    startedAt,
+    completedAt: "",
+    status: "skipped",
+    reason: "",
+    queries: [],
+    apiCalls: 0,
+    videosFound: 0,
+    newVideos: 0,
+    duplicates: 0,
+    rejectedVideos: 0,
+    rejectedSamples: [],
+    errors: [],
+  };
+  if (config.offline || !config.youtubeSpikeEnabled || !config.youtubeDiscoveryEnabled) {
+    summary.reason = "YouTube discovery disabled or offline.";
+    return summary;
+  }
+  if (!youtubeKeyList(config).length) {
+    summary.reason = "YouTube discovery skipped because no API key is configured.";
+    warnings.push("YouTube discovery skipped because YOUTUBE_API_KEY/GOOGLE_API_KEY/WORLD_CUP_YOUTUBE_API_KEYS is missing.");
+    return summary;
+  }
+  pruneYouTubeDiagnostics(db, config, now);
+  const lastAt = latestRunAt(db, "youtube_discovery_runs", "started_at");
+  if (!shouldRunInterval(lastAt, config.youtubeDiscoveryIntervalMinutes, now, config.force)) {
+    summary.reason = `last discovery was ${Math.round(minutesSince(lastAt, now))} minutes ago`;
+    summary.lastRunAt = lastAt;
+    return summary;
+  }
+  const maxSearchCalls = Math.max(1, Math.min(2, Math.ceil(Number(config.youtubeDiscoveryMaxPerRun || DEFAULT_YOUTUBE_DISCOVERY_MAX_PER_RUN) / 50)));
+  const queries = rotateQueriesForDiscovery(youtubeQueries(), maxSearchCalls, now);
+  summary.queries = queries;
+  summary.ran = true;
+  try {
+    const seen = new Set();
+    for (let queryIndex = 0; queryIndex < queries.length && summary.videosFound < config.youtubeDiscoveryMaxPerRun; queryIndex += 1) {
+      const query = queries[queryIndex];
+      try {
+        summary.apiCalls += 1;
+        const result = await youtubeDiscoverySearchWithKeyFallback(
+          config,
+          query,
+          {
+            maxResults: Math.min(50, Number(config.youtubeDiscoveryMaxPerRun || DEFAULT_YOUTUBE_DISCOVERY_MAX_PER_RUN) - summary.videosFound),
+            keyIndex: queryIndex,
+            now,
+          },
+          warnings,
+        );
+        for (const video of result.videos) {
+          if (seen.has(video.id) || summary.videosFound >= config.youtubeDiscoveryMaxPerRun) continue;
+          seen.add(video.id);
+          summary.videosFound += 1;
+          const rejected = rejectedYouTubeTrendReason({ ...video, views: 0, comments: 0 });
+          if (rejected) {
+            summary.rejectedVideos += 1;
+            if (summary.rejectedSamples.length < 10) summary.rejectedSamples.push({ id: video.id, title: video.title, reason: rejected });
+            continue;
+          }
+          if (upsertDiscoveredYouTubeVideo(db, video, summary.runId, startedAt)) summary.newVideos += 1;
+          else summary.duplicates += 1;
+        }
+      } catch (error) {
+        const message = cleanText(error.message);
+        summary.errors.push({ query, error: message });
+        warnings.push(`YouTube discovery query failed for "${query}": ${message}`);
+      }
+    }
+    enforceYouTubePoolCap(db, config, now);
+    summary.activePoolSize = activeYouTubePoolRows(db, config, now).length;
+    summary.status = summary.errors.length ? (summary.videosFound ? "partial" : "error") : "success";
+    summary.completedAt = nowIso();
+    if (summary.status === "error") summary.error = summary.errors.map((entry) => entry.error).join("; ");
+    recordDiscoveryRun(db, summary);
+    return summary;
+  } catch (error) {
+    summary.status = "error";
+    summary.error = cleanText(error.message);
+    summary.completedAt = nowIso();
+    recordDiscoveryRun(db, summary);
+    warnings.push(`YouTube discovery failed: ${summary.error}`);
+    return summary;
+  }
+}
+
+async function runYouTubeStatsRefreshIfDue(config, db, warnings, now = new Date()) {
+  const startedAt = now.toISOString();
+  const summary = {
+    ran: false,
+    runId: `yt-stats-${hashText(startedAt).slice(0, 12)}`,
+    startedAt,
+    completedAt: "",
+    status: "skipped",
+    reason: "",
+    activePoolSize: 0,
+    batchesRequested: 0,
+    videosUpdated: 0,
+    spikeEligible: 0,
+    rejectedSpikes: 0,
+    apiCalls: 0,
+    eligibleVideos: [],
+    rejectedSamples: [],
+    errors: [],
+  };
+  if (config.offline || !config.youtubeSpikeEnabled) {
+    summary.reason = "YouTube stats disabled or offline.";
+    return summary;
+  }
+  if (!youtubeKeyList(config).length) {
+    summary.reason = "YouTube stats skipped because no API key is configured.";
+    warnings.push("YouTube stats refresh skipped because YOUTUBE_API_KEY/GOOGLE_API_KEY/WORLD_CUP_YOUTUBE_API_KEYS is missing.");
+    return summary;
+  }
+  const lastAt = latestRunAt(db, "youtube_stats_runs", "started_at");
+  if (!shouldRunInterval(lastAt, config.youtubeStatsIntervalMinutes, now, config.force)) {
+    summary.reason = `last stats refresh was ${Math.round(minutesSince(lastAt, now))} minutes ago`;
+    summary.lastRunAt = lastAt;
+    summary.activePoolSize = activeYouTubePoolRows(db, config, now).length;
+    return summary;
+  }
+  const pool = activeYouTubePoolRows(db, config, now);
+  const byId = new Map(pool.map((row) => [row.video_id, row]));
+  const batches = chunkArray(pool.map((row) => row.video_id), 50);
+  summary.ran = true;
+  summary.activePoolSize = pool.length;
+  summary.batchesRequested = batches.length;
+  try {
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+      const ids = batches[batchIndex];
+      try {
+        summary.apiCalls += 1;
+        const stats = await youtubeVideosListWithKeyFallback(config, ids, { keyIndex: batchIndex }, warnings);
+        for (const stat of stats) {
+          const row = byId.get(stat.id);
+          const video = {
+            ...stat,
+            query: row?.query || stat.query || "",
+            title: stat.title || row?.title || "",
+            channelTitle: stat.channelTitle || row?.channel_title || "",
+            publishedAt: stat.publishedAt || row?.published_at || "",
+          };
+          const previous = latestYouTubeSnapshot(db, stat.id);
+          const metrics = youtubeRollingSpikeMetrics(video, previous, config, now);
+          recordYouTubeStatsSnapshot(db, video, previous, metrics, summary.runId, startedAt);
+          summary.videosUpdated += 1;
+          if (metrics.eligible) {
+            summary.spikeEligible += 1;
+            summary.eligibleVideos.push({ ...video, spike: metrics });
+          } else {
+            summary.rejectedSpikes += 1;
+            if (summary.rejectedSamples.length < 15) {
+              summary.rejectedSamples.push({
+                id: video.id,
+                title: video.title,
+                views: video.views,
+                deltaViews: metrics.deltaViews,
+                growthPercent: Math.round(metrics.growthPercent),
+                reason: metrics.rejectionReason,
+              });
+            }
+          }
+        }
+      } catch (error) {
+        const message = cleanText(error.message);
+        summary.errors.push({ batch: batchIndex + 1, size: ids.length, error: message });
+        warnings.push(`YouTube stats batch ${batchIndex + 1}/${batches.length} failed: ${message}`);
+      }
+    }
+    summary.status = summary.errors.length ? (summary.videosUpdated ? "partial" : "error") : "success";
+    summary.completedAt = nowIso();
+    if (summary.status === "error") summary.error = summary.errors.map((entry) => entry.error).join("; ");
+    recordStatsRun(db, summary);
+    return summary;
+  } catch (error) {
+    summary.status = "error";
+    summary.error = cleanText(error.message);
+    summary.completedAt = nowIso();
+    recordStatsRun(db, summary);
+    warnings.push(`YouTube stats refresh failed: ${summary.error}`);
+    return summary;
+  }
 }
 
 function youtubeSpikeMetrics(video = {}, previous = null, now = new Date()) {
@@ -938,6 +1707,51 @@ function youtubeSpikeMetrics(video = {}, previous = null, now = new Date()) {
   };
 }
 
+function youtubeRollingSpikeMetrics(video = {}, previous = null, config = {}, now = new Date()) {
+  const previousViews = Number(previous?.views || 0);
+  const currentViews = Number(video.views || 0);
+  const previousComments = Number(previous?.comments || 0);
+  const currentComments = Number(video.comments || 0);
+  const deltaViews = Math.max(0, currentViews - previousViews);
+  const deltaComments = Math.max(0, currentComments - previousComments);
+  const elapsedMinutes = previous?.scanned_at ? Math.max(1, (now.getTime() - Date.parse(previous.scanned_at)) / 60000) : 0;
+  const growthPercent = previousViews > 0 ? (deltaViews / previousViews) * 100 : 0;
+  const minBaseline = Number(config.youtubeMinBaselineViews || DEFAULT_YOUTUBE_MIN_BASELINE_VIEWS);
+  const minDeltaViews = Number(config.youtubeSpikeMinDeltaViews || DEFAULT_YOUTUBE_SPIKE_MIN_DELTA_VIEWS);
+  const spikeGrowthPercent = Number(config.youtubeSpikeGrowthPercent || DEFAULT_YOUTUBE_SPIKE_GROWTH_PERCENT);
+  const strongDeltaViews = Number(config.youtubeStrongDeltaViews || DEFAULT_YOUTUBE_STRONG_DELTA_VIEWS);
+  const strongDeltaMinGrowthPercent = Number(config.youtubeStrongDeltaMinGrowthPercent || DEFAULT_YOUTUBE_STRONG_DELTA_MIN_GROWTH_PERCENT);
+  const contentRejection = rejectedYouTubeTrendReason({ ...video, views: currentViews, comments: currentComments });
+  let rejectionReason = "";
+  if (!previous) rejectionReason = "no previous stats snapshot";
+  else if (previousViews < minBaseline) rejectionReason = `baseline views ${previousViews} below ${minBaseline}`;
+  else if (contentRejection) rejectionReason = contentRejection;
+  else if (deltaViews < minDeltaViews) rejectionReason = `delta views ${deltaViews} below ${minDeltaViews}`;
+  else if (!(growthPercent >= spikeGrowthPercent || (deltaViews >= strongDeltaViews && growthPercent >= strongDeltaMinGrowthPercent))) {
+    rejectionReason = `growth ${Math.round(growthPercent)}% below ${spikeGrowthPercent}% and delta ${deltaViews} below strong override`;
+  }
+  const eligible = !rejectionReason;
+  const viewsPerMinute = elapsedMinutes > 0 ? deltaViews / elapsedMinutes : 0;
+  const score = eligible
+    ? Math.round(Math.min(100, 72 + Math.min(18, growthPercent / 10) + Math.min(10, Math.log10(deltaViews + 1) * 2)))
+    : Math.round(Math.min(70, Math.max(0, Math.log10(deltaViews + 1) * 10 + Math.min(20, growthPercent / 10))));
+  return {
+    eligible,
+    rejectionReason,
+    score,
+    previousViews,
+    currentViews,
+    deltaViews,
+    previousComments,
+    currentComments,
+    deltaComments,
+    growthPercent,
+    elapsedMinutes,
+    viewsPerMinute,
+    hasPrevious: Boolean(previous),
+  };
+}
+
 function entityTokensForText(text = "", config = {}) {
   const cleaned = cleanText(text).toLowerCase();
   const tokens = [];
@@ -949,11 +1763,24 @@ function entityTokensForText(text = "", config = {}) {
   return [...new Set([...tokens, ...genericMatches])].slice(0, 8);
 }
 
+function titleTopicKey(video = {}, config = {}) {
+  const topic = topicFromYouTubeVideo(video);
+  if (topic.teamA && topic.teamB) return normalizeTeamComparable(`${topic.teamA} ${topic.teamB}`);
+  const entities = entityTokensForText(video.title, config).filter((entity) => !/^world cup|fifa$/i.test(entity));
+  if (entities.length >= 2) return normalizeTeamComparable(entities.slice(0, 2).join(" "));
+  if (entities.length === 1) return normalizeTeamComparable(entities[0]);
+  return normalizeTeamComparable(video.title)
+    .split(/\s+/)
+    .filter((word) => !["world", "cup", "fifa", "football", "soccer", "shorts", "viral", "live", "new", "today", "explained"].includes(word))
+    .slice(0, 6)
+    .join(" ");
+}
+
 function localYouTubeClusterCandidate(videos = [], config = {}) {
   const groups = new Map();
   for (const video of videos) {
     const entities = entityTokensForText(video.title, config);
-    const key = cleanText(entities[0] || topicFromYouTubeVideo(video).teamA || topicFromYouTubeVideo(video).topic.split(/\s+/).slice(0, 4).join(" ")).toLowerCase();
+    const key = titleTopicKey(video, config);
     if (!key) continue;
     const current = groups.get(key) || { key, entities, videos: [], score: 0 };
     current.videos.push(video);
@@ -968,6 +1795,11 @@ function localYouTubeClusterCandidate(videos = [], config = {}) {
     }))
     .sort((a, b) => b.clusterScore - a.clusterScore || b.videos.length - a.videos.length)[0];
   if (!best?.videos?.length) return null;
+  const minVideos = Number(config.youtubeTopicMinSpikeVideos || DEFAULT_YOUTUBE_TOPIC_MIN_SPIKE_VIDEOS);
+  const minChannels = Number(config.youtubeTopicMinChannels || DEFAULT_YOUTUBE_TOPIC_MIN_CHANNELS);
+  const minConfidence = Number(config.youtubeTopicMinConfidence || DEFAULT_YOUTUBE_TOPIC_MIN_CONFIDENCE);
+  const distinctChannels = new Set(best.videos.map((video) => cleanText(video.channelTitle).toLowerCase()).filter(Boolean)).size;
+  if (best.videos.length < minVideos || distinctChannels < minChannels || best.clusterScore < minConfidence) return null;
   const leader = best.videos.sort((a, b) => Number(b.spike?.score || 0) - Number(a.spike?.score || 0))[0];
   const topic = topicFromYouTubeVideo(leader);
   return {
@@ -978,6 +1810,9 @@ function localYouTubeClusterCandidate(videos = [], config = {}) {
     score: best.clusterScore,
     reason: `YouTube spike cluster from ${best.videos.length} recent videos around ${best.entities.join(", ") || "one football topic"}.`,
     source: "youtube-spike-cluster",
+    confidence: best.clusterScore,
+    clusterSize: best.videos.length,
+    distinctChannels,
     entities: best.entities,
     evidence: best.videos.slice(0, 6).map((video) => ({
       id: video.id,
@@ -986,12 +1821,20 @@ function localYouTubeClusterCandidate(videos = [], config = {}) {
       views: video.views,
       comments: video.comments,
       score: video.spike?.score,
+      deltaViews: video.spike?.deltaViews,
+      growthPercent: video.spike?.growthPercent,
     })),
   };
 }
 
 async function buildGeminiTopicClusterCandidate(config, videos, warnings) {
   if (!videos.length) return null;
+  const minVideos = Number(config.youtubeTopicMinSpikeVideos || DEFAULT_YOUTUBE_TOPIC_MIN_SPIKE_VIDEOS);
+  const minChannels = Number(config.youtubeTopicMinChannels || DEFAULT_YOUTUBE_TOPIC_MIN_CHANNELS);
+  const minConfidence = Number(config.youtubeTopicMinConfidence || DEFAULT_YOUTUBE_TOPIC_MIN_CONFIDENCE);
+  const distinctInputChannels = new Set(videos.map((video) => cleanText(video.channelTitle).toLowerCase()).filter(Boolean)).size;
+  if (videos.length < minVideos || distinctInputChannels < minChannels) return null;
+  if (config.offline || config.youtubeClusterAnalyzer === "local") return localYouTubeClusterCandidate(videos, config);
   const keyInfo = await getActiveGeminiKey();
   if (!keyInfo?.apiKey) {
     warnings.push("Gemini analyzer skipped because no active Gemini API key was available; using local YouTube clustering.");
@@ -1001,6 +1844,8 @@ async function buildGeminiTopicClusterCandidate(config, videos, warnings) {
 You are a World Cup short-video trigger analyst.
 Cluster these recent football YouTube videos and find the single strongest repeated topic to dispatch.
 Prefer concrete matches, teams, players, lineup/injury/pressure narratives, and post-match reactions.
+Only dispatch if at least ${minVideos} spike videos from at least ${minChannels} distinct channels are about the same concrete topic.
+Return confidence from 0-100. Return confidence below ${minConfidence} if the evidence is not clearly one repeated topic.
 Return JSON only:
 {
   "topic": "specific short-video topic",
@@ -1043,18 +1888,31 @@ ${JSON.stringify(
     if (!topic) return localYouTubeClusterCandidate(videos, config);
     const rawScore = Number(result.json?.score);
     const confidence = Number(result.json?.confidence);
+    const normalizedConfidence = Number.isFinite(confidence) ? Math.max(0, Math.min(100, confidence)) : 0;
+    const rawEvidence = Array.isArray(result.json?.evidence) ? result.json.evidence : [];
+    const evidence = rawEvidence.length ? rawEvidence.slice(0, 12) : videos.slice(0, Math.max(minVideos, 12));
+    const distinctEvidenceChannels = new Set(evidence.map((item) => cleanText(item?.channelTitle).toLowerCase()).filter(Boolean)).size || distinctInputChannels;
+    const clusterSize = Math.max(evidence.length, minVideos);
+    if (clusterSize < minVideos || distinctEvidenceChannels < minChannels || normalizedConfidence < minConfidence) {
+      warnings.push(
+        `Gemini topic analyzer did not meet cluster thresholds (${clusterSize}/${minVideos} videos, ${distinctEvidenceChannels}/${minChannels} channels, confidence ${Math.round(normalizedConfidence)}/${minConfidence}).`,
+      );
+      return localYouTubeClusterCandidate(videos, config);
+    }
     return {
       type: ["prediction", "postmatch", "pre-tournament"].includes(cleanText(result.json?.type).toLowerCase()) ? cleanText(result.json.type).toLowerCase() : "pre-tournament",
       topic,
       teamA: cleanText(result.json?.teamA),
       teamB: cleanText(result.json?.teamB),
-      score: Number.isFinite(rawScore) ? Math.max(0, Math.min(100, rawScore)) : localYouTubeClusterCandidate(videos, config)?.score || 0,
+      score: Number.isFinite(rawScore) ? Math.max(0, Math.min(100, rawScore)) : normalizedConfidence,
       reason: cleanText(result.json?.reason) || "Gemini topic analyzer selected a repeated YouTube spike.",
       source: "gemini-topic-analyzer",
       analyzerModel: result.model,
-      confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(100, confidence)) : 0,
+      confidence: normalizedConfidence,
+      clusterSize,
+      distinctChannels: distinctEvidenceChannels,
       entities: Array.isArray(result.json?.entities) ? result.json.entities.map(cleanText).filter(Boolean).slice(0, 8) : [],
-      evidence: Array.isArray(result.json?.evidence) ? result.json.evidence.slice(0, 6) : [],
+      evidence: evidence.slice(0, 12),
     };
   } catch (error) {
     warnings.push(`Gemini topic analyzer failed: ${error.message}; using local YouTube clustering.`);
@@ -1062,62 +1920,92 @@ ${JSON.stringify(
   }
 }
 
+function recordTopicClusterAttempt(db, summary = {}) {
+  db.prepare(`
+    INSERT OR REPLACE INTO youtube_topic_cluster_attempts(
+      run_id, attempted_at, status, input_count, cluster_count, strongest_size, strongest_channels,
+      confidence, topic, candidate_json, response_json, error
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    cleanText(summary.runId),
+    cleanText(summary.attemptedAt),
+    cleanText(summary.status || "skipped"),
+    Number(summary.inputCount || 0),
+    Number(summary.clusterCount || 0),
+    Number(summary.strongestSize || 0),
+    Number(summary.strongestChannels || 0),
+    Number(summary.confidence || 0),
+    cleanText(summary.topic),
+    jsonText(summary.candidate || null),
+    jsonText(summary.response || summary),
+    cleanText(summary.error),
+  );
+}
+
+async function buildYouTubeClusterCandidates(config, db, warnings, statsSummary = {}, now = new Date()) {
+  const attemptedAt = now.toISOString();
+  const spikeVideos = (Array.isArray(statsSummary.eligibleVideos) && statsSummary.eligibleVideos.length ? statsSummary.eligibleVideos : recentEligibleSpikeVideos(db, config, now)).sort(
+    (a, b) => Number(b.spike?.growthPercent || 0) - Number(a.spike?.growthPercent || 0) || Number(b.spike?.deltaViews || 0) - Number(a.spike?.deltaViews || 0),
+  );
+  const summary = {
+    runId: `yt-cluster-${hashText(attemptedAt).slice(0, 12)}`,
+    attemptedAt,
+    status: "skipped",
+    inputCount: spikeVideos.length,
+    clusterCount: 0,
+    strongestSize: 0,
+    strongestChannels: 0,
+    confidence: 0,
+    topic: "",
+    candidate: null,
+    reason: "",
+  };
+  const minVideos = Number(config.youtubeTopicMinSpikeVideos || DEFAULT_YOUTUBE_TOPIC_MIN_SPIKE_VIDEOS);
+  const minChannels = Number(config.youtubeTopicMinChannels || DEFAULT_YOUTUBE_TOPIC_MIN_CHANNELS);
+  const distinctChannels = new Set(spikeVideos.map((video) => cleanText(video.channelTitle).toLowerCase()).filter(Boolean)).size;
+  if (spikeVideos.length < minVideos || distinctChannels < minChannels) {
+    summary.reason = `not enough spike evidence (${spikeVideos.length}/${minVideos} videos, ${distinctChannels}/${minChannels} channels)`;
+    summary.strongestSize = spikeVideos.length;
+    summary.strongestChannels = distinctChannels;
+    recordTopicClusterAttempt(db, summary);
+    return { candidates: [], diagnostics: summary };
+  }
+  try {
+    const candidate = await buildGeminiTopicClusterCandidate(config, spikeVideos, warnings);
+    if (!candidate) {
+      summary.reason = "no repeated topic cluster met thresholds";
+      summary.strongestSize = spikeVideos.length;
+      summary.strongestChannels = distinctChannels;
+      recordTopicClusterAttempt(db, summary);
+      return { candidates: [], diagnostics: summary };
+    }
+    summary.status = "success";
+    summary.clusterCount = 1;
+    summary.strongestSize = Number(candidate.clusterSize || candidate.evidence?.length || spikeVideos.length);
+    summary.strongestChannels = Number(candidate.distinctChannels || distinctChannels);
+    summary.confidence = Number(candidate.confidence || candidate.score || 0);
+    summary.topic = candidate.topic;
+    summary.candidate = candidate;
+    recordTopicClusterAttempt(db, summary);
+    return { candidates: [candidate], diagnostics: summary };
+  } catch (error) {
+    summary.status = "error";
+    summary.error = cleanText(error.message);
+    warnings.push(`YouTube topic clustering failed: ${summary.error}`);
+    recordTopicClusterAttempt(db, summary);
+    return { candidates: [], diagnostics: summary };
+  }
+}
+
 async function buildYouTubeSpikeCandidates(config, db, warnings, now = new Date()) {
-  if (config.offline || !config.youtubeSpikeEnabled) return [];
-  if (!config.youtubeApiKey) {
-    warnings.push("YouTube spike scanner skipped because YOUTUBE_API_KEY/GOOGLE_API_KEY is missing.");
-    return [];
-  }
-  const lastScanAt = lastYouTubeScanAt(db);
-  if (lastScanAt && !config.force) {
-    const elapsedMinutes = (now.getTime() - Date.parse(lastScanAt)) / 60000;
-    if (Number.isFinite(elapsedMinutes) && elapsedMinutes < config.youtubeSpikeIntervalMinutes) {
-      warnings.push(`YouTube spike scanner skipped; last scan was ${Math.round(elapsedMinutes)} minutes ago (${config.youtubeSpikeIntervalMinutes}-minute interval).`);
-      return [];
-    }
-  }
-  const queries = youtubeQueries();
-  const perQuery = Math.max(1, Math.min(50, Math.ceil(config.youtubeScanMax / Math.max(1, queries.length))));
-  const seenVideoIds = new Set();
-  const scanned = [];
-  for (const query of queries) {
-    try {
-      const videos = await youtubeSearch(config, query, { maxResults: perQuery, publishedAfterHours: 24 });
-      for (const video of videos) {
-        if (seenVideoIds.has(video.id)) continue;
-        seenVideoIds.add(video.id);
-        if (scanned.length >= config.youtubeScanMax) break;
-        const rejected = rejectedYouTubeTrendReason(video);
-        if (rejected) {
-          warnings.push(`Rejected YouTube spike "${video.title}": ${rejected}.`);
-          continue;
-        }
-        const previous = recordYouTubeSnapshot(db, video, now.toISOString());
-        const spike = youtubeSpikeMetrics(video, previous, now);
-        scanned.push({ ...video, spike });
-      }
-    } catch (error) {
-      warnings.push(`YouTube spike query failed for "${query}": ${error.message}`);
-    }
-  }
-  if (!scanned.length) return [];
-  const videos = scanned.sort((a, b) => Number(b.spike?.score || 0) - Number(a.spike?.score || 0));
-  const cluster = await buildGeminiTopicClusterCandidate(config, videos, warnings);
-  const directCandidates = videos.slice(0, 5).map((video) => {
-    const topic = topicFromYouTubeVideo(video);
-    return {
-      type: topic.type || "pre-tournament",
-      topic: topic.topic,
-      teamA: topic.teamA,
-      teamB: topic.teamB,
-      score: video.spike.score,
-      reason: `YouTube spike signal from ${video.channelTitle || "recent video"} (${Math.round(video.spike.deltaViewsPerHour)} delta views/hour, ${video.comments} comments).`,
-      source: "youtube-spike",
-      youtube: video,
-      spike: video.spike,
-    };
-  });
-  return [...(cluster ? [cluster] : []), ...directCandidates];
+  const discovery = await runYouTubeDiscoveryIfDue(config, db, warnings, now);
+  const stats = await runYouTubeStatsRefreshIfDue(config, db, warnings, now);
+  const cluster = await buildYouTubeClusterCandidates(config, db, warnings, stats, now);
+  return {
+    candidates: cluster.candidates,
+    diagnostics: { discovery, stats, cluster: cluster.diagnostics },
+  };
 }
 
 async function buildGeminiTrendCandidate(warnings) {
@@ -1205,6 +2093,7 @@ function candidateGroundedSourceCount(candidate) {
   if (["fixture-scheduler", "espn-scoreboard", "evergreen-fallback"].includes(candidate?.source)) return 1;
   if (["youtube", "youtube-spike"].includes(candidate?.source)) return candidate.youtube?.id ? 1 : 0;
   if (candidate?.source === "youtube-spike-cluster") return Array.isArray(candidate.evidence) ? candidate.evidence.length : 1;
+  if (candidate?.source === "gemini-topic-analyzer") return Array.isArray(candidate.evidence) ? candidate.evidence.length : 1;
   const explicitSources = Array.isArray(candidate?.sources) ? candidate.sources.filter((source) => cleanText(source?.url || source?.title)).length : 0;
   const groundingSources = Number(candidate?.groundingHealth?.sourceCount || 0);
   return Math.max(explicitSources, groundingSources);
@@ -1213,7 +2102,12 @@ function candidateGroundedSourceCount(candidate) {
 function candidateHasRecognizableEntity(candidate) {
   if (candidate?.source === "evergreen-fallback") return true;
   const text = candidateText(candidate);
-  return MAJOR_TEAM_PATTERN.test(text) || RECOGNIZABLE_PLAYER_PATTERN.test(text);
+  return (
+    MAJOR_TEAM_PATTERN.test(normalizeTeamComparable(text)) ||
+    RECOGNIZABLE_PLAYER_PATTERN.test(text) ||
+    DEFAULT_VIP_TEAMS.some((team) => textMentionsVipEntity(text, team)) ||
+    DEFAULT_VIP_PLAYERS.some((player) => textMentionsVipEntity(text, player))
+  );
 }
 
 function isScheduledMatchCandidate(candidate) {
@@ -2046,7 +2940,9 @@ async function runControllerOnce(config) {
         .filter(Boolean)
     : [];
   const espnCandidates = await buildEspnCandidates(config, state, db, warnings, now);
-  const youtubeSpikeCandidates = await buildYouTubeSpikeCandidates(config, db, warnings, now);
+  const youtubeSpikeResult = await buildYouTubeSpikeCandidates(config, db, warnings, now);
+  const youtubeSpikeCandidates = youtubeSpikeResult.candidates || [];
+  const youtubeDiagnostics = youtubeSpikeResult.diagnostics || {};
   const youtubeCandidates = config.offline || !config.legacyTriggerEnabled ? [] : await buildYouTubeCandidates(config, warnings);
   const geminiCandidate = config.offline || !config.legacyTriggerEnabled || !config.enableGeminiTrends ? null : await buildGeminiTrendCandidate(warnings);
   const evergreenCandidate = buildEvergreenFallbackCandidate(state, config, now);
@@ -2069,6 +2965,9 @@ async function runControllerOnce(config) {
       espnCandidates: espnCandidates.length,
       fixtureCandidates: matchCandidates.length,
       youtubeSpikeCandidates: youtubeSpikeCandidates.length,
+      youtubeDiscovery: youtubeDiagnostics.discovery || null,
+      youtubeStats: youtubeDiagnostics.stats || null,
+      youtubeCluster: youtubeDiagnostics.cluster || null,
       youtubeCandidates: youtubeCandidates.length,
       geminiTrendCandidate: Boolean(geminiCandidate),
       evergreenCandidate: Boolean(evergreenCandidate),
@@ -2090,7 +2989,9 @@ async function runControllerOnce(config) {
     state.lastScanCompletedAt = nowIso();
     const top = candidates[0] || null;
     const topReason = top?.gate?.reasons?.length ? ` Reason: ${top.gate.reasons.join("; ")}.` : "";
-    const diagnosticText = ` Sources: ESPN ${espnCandidates.length}, YouTube spikes ${youtubeSpikeCandidates.length}, YouTube trends ${youtubeCandidates.length}, Gemini ${geminiCandidate ? 1 : 0}, fallback ${evergreenCandidate ? 1 : 0}.`;
+    const ytStats = youtubeDiagnostics.stats || {};
+    const ytCluster = youtubeDiagnostics.cluster || {};
+    const diagnosticText = ` Sources: ESPN ${espnCandidates.length}, YouTube clusters ${youtubeSpikeCandidates.length}, YouTube trends ${youtubeCandidates.length}, Gemini ${geminiCandidate ? 1 : 0}, fallback ${evergreenCandidate ? 1 : 0}. YouTube pool ${ytStats.activePoolSize || 0}, refreshed ${ytStats.videosUpdated || 0}, spike videos ${ytStats.spikeEligible || 0}, strongest cluster ${ytCluster.strongestSize || 0}/${config.youtubeTopicMinSpikeVideos}.`;
     const noticeDecision = noCandidateNoticeDecision(state, scan, config, now);
     scan.noCandidateNotice = noticeDecision;
     scan.diagnostics.noCandidateNotice = noticeDecision;
@@ -2206,9 +3107,13 @@ export {
   parseTelegramIntentCommand,
   parseTelegramWorldCupCommand,
   persistControllerState,
+  runYouTubeDiscoveryIfDue,
+  runYouTubeStatsRefreshIfDue,
+  buildYouTubeClusterCandidates,
   selectCandidate,
   validateWorldCupIntent,
   workflowInputs,
+  youtubeRollingSpikeMetrics,
   youtubeSpikeMetrics,
 };
 

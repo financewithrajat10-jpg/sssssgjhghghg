@@ -18,11 +18,38 @@ import {
   parseGemmaIntentPayload,
   parseTelegramWorldCupCommand,
   persistControllerState,
+  runYouTubeDiscoveryIfDue,
+  runYouTubeStatsRefreshIfDue,
+  buildYouTubeClusterCandidates,
   selectCandidate,
   validateWorldCupIntent,
   workflowInputs,
+  youtubeRollingSpikeMetrics,
   youtubeSpikeMetrics,
 } from "./azure-controller.mjs";
+
+function mockYoutubeResponse(payload, ok = true, status = 200) {
+  return {
+    ok,
+    status,
+    async json() {
+      return payload;
+    },
+    async text() {
+      return JSON.stringify(payload);
+    },
+  };
+}
+
+async function withMockedFetch(mock, callback) {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock;
+  try {
+    return await callback();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
 
 test("auto-trending intent routes to discovery without trusting a model topic", () => {
   const intent = validateWorldCupIntent(
@@ -199,6 +226,67 @@ test("default ESPN pre-match window catches VIP fixtures up to three days out", 
   assert.equal(candidate.source, "espn-scoreboard");
 });
 
+test("broad ESPN filter catches major World Cup pre-match fixtures beyond the old env list", () => {
+  const staleVmConfig = {
+    vipTeams: ["France"],
+    vipPlayers: [],
+    prematchWindowStartHours: 12,
+    prematchWindowEndHours: 72,
+    postmatchDelayMinutes: 20,
+  };
+  const match = {
+    id: "760428",
+    name: "Cape Verde at Spain",
+    kickoff: "2026-06-15T16:00:00Z",
+    status: "Scheduled",
+    completed: false,
+    home: "Spain",
+    away: "Cape Verde",
+    score: "Spain 0 - 0 Cape Verde",
+  };
+  assert.equal(isVipMatch(match, staleVmConfig), true);
+
+  const candidate = espnCandidateFromMatch(match, staleVmConfig, new Date("2026-06-14T16:30:00Z"));
+  assert.equal(candidate.type, "prediction");
+  assert.equal(candidate.teamA, "Cape Verde");
+  assert.equal(candidate.teamB, "Spain");
+});
+
+test("broad ESPN filter catches Germany and Ivory Coast completed-match analysis", () => {
+  const staleVmConfig = {
+    vipTeams: ["France"],
+    vipPlayers: [],
+    prematchWindowStartHours: 12,
+    prematchWindowEndHours: 72,
+    postmatchDelayMinutes: 20,
+  };
+  const germany = {
+    id: "760422",
+    name: "Cura\u00e7ao at Germany",
+    kickoff: "2026-06-14T17:00:00Z",
+    status: "Full Time",
+    completed: true,
+    home: "Germany",
+    away: "Cura\u00e7ao",
+    score: "Germany 7 - 1 Cura\u00e7ao",
+  };
+  const ivoryCoast = {
+    id: "760423",
+    name: "Ecuador at Ivory Coast",
+    kickoff: "2026-06-14T23:00:00Z",
+    status: "Full Time",
+    completed: true,
+    home: "Ivory Coast",
+    away: "Ecuador",
+    score: "Ivory Coast 1 - 0 Ecuador",
+  };
+
+  const germanyCandidate = espnCandidateFromMatch(germany, staleVmConfig, new Date("2026-06-14T20:00:00Z"));
+  const ivoryCoastCandidate = espnCandidateFromMatch(ivoryCoast, staleVmConfig, new Date("2026-06-15T02:00:00Z"));
+  assert.equal(germanyCandidate.type, "postmatch");
+  assert.equal(ivoryCoastCandidate.type, "postmatch");
+});
+
 test("VIP team matching avoids substring false positives", () => {
   assert.equal(
     isVipMatch(
@@ -354,17 +442,240 @@ test("YouTube spike metrics detect stronger current velocity", () => {
   assert.ok(metrics.score >= 80);
 });
 
-test("local YouTube cluster fallback returns a repeated-topic candidate", () => {
-  const candidate = localYouTubeClusterCandidate(
+test("local YouTube cluster fallback requires the configured repeated-topic threshold", () => {
+  const twoVideoCluster = localYouTubeClusterCandidate(
     [
       { id: "a", title: "USA World Cup lineup pressure explained", channelTitle: "One", views: 5000, comments: 50, spike: { score: 86 } },
       { id: "b", title: "USMNT World Cup lineup problem grows", channelTitle: "Two", views: 7000, comments: 70, spike: { score: 88 } },
     ],
     { vipTeams: ["USA", "USMNT"], vipPlayers: [] },
   );
+  assert.equal(twoVideoCluster, null);
+
+  const candidate = localYouTubeClusterCandidate(
+    Array.from({ length: 10 }, (_, index) => ({
+      id: `usa-${index}`,
+      title: `USA World Cup lineup pressure explained part ${index}`,
+      channelTitle: `Channel ${index % 4}`,
+      views: 5000 + index,
+      comments: 50,
+      spike: { score: 90, deltaViews: 2000, growthPercent: 120 },
+    })),
+    {
+      vipTeams: ["USA", "USMNT"],
+      vipPlayers: [],
+      youtubeTopicMinSpikeVideos: 10,
+      youtubeTopicMinChannels: 4,
+      youtubeTopicMinConfidence: 75,
+    },
+  );
   assert.equal(candidate.source, "youtube-spike-cluster");
   assert.ok(candidate.score >= 88);
   assert.match(candidate.reason, /cluster/i);
+});
+
+test("rolling YouTube spike metrics require baseline and doubled 30-minute growth", () => {
+  const config = controllerConfig({ youtubeApiKeys: "test" });
+  const now = new Date("2026-06-14T12:30:00Z");
+  const eligible = youtubeRollingSpikeMetrics(
+    { title: "USA World Cup lineup pressure explained", views: 2200, comments: 40 },
+    { scanned_at: "2026-06-14T12:00:00Z", views: 1000, comments: 20 },
+    config,
+    now,
+  );
+  assert.equal(eligible.eligible, true);
+  assert.equal(Math.round(eligible.growthPercent), 120);
+
+  const tinyBaseline = youtubeRollingSpikeMetrics(
+    { title: "USA World Cup lineup pressure explained", views: 200, comments: 4 },
+    { scanned_at: "2026-06-14T12:00:00Z", views: 50, comments: 1 },
+    config,
+    now,
+  );
+  assert.equal(tinyBaseline.eligible, false);
+  assert.match(tinyBaseline.rejectionReason, /baseline/i);
+
+  const strongDelta = youtubeRollingSpikeMetrics(
+    { title: "USA World Cup lineup pressure explained", views: 17000, comments: 80 },
+    { scanned_at: "2026-06-14T12:00:00Z", views: 6000, comments: 20 },
+    config,
+    now,
+  );
+  assert.equal(strongDelta.eligible, true);
+});
+
+test("rolling YouTube discovery collects 100 videos with two search calls", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wc-youtube-discovery-"));
+  const previousQueries = process.env.WORLD_CUP_TREND_QUERIES;
+  process.env.WORLD_CUP_TREND_QUERIES = "FIFA World Cup 2026|football World Cup";
+  const config = controllerConfig({
+    dbFile: path.join(tempDir, "controller.sqlite"),
+    youtubeApiKeys: "test-key",
+    youtubeDiscoveryMaxPerRun: 100,
+    youtubeDiscoveryIntervalMinutes: 60,
+  });
+  const db = await openControllerDb(config);
+  const fetchCalls = [];
+  try {
+    await withMockedFetch(async (url) => {
+      fetchCalls.push(String(url));
+      const parsed = new URL(String(url));
+      assert.equal(parsed.pathname, "/youtube/v3/search");
+      const query = parsed.searchParams.get("q").replace(/\W+/g, "-").toLowerCase();
+      const items = Array.from({ length: 50 }, (_, index) => ({
+        id: { videoId: `${query}-${index}` },
+        snippet: {
+          title: `USA World Cup lineup pressure ${query} ${index}`,
+          channelTitle: `Discovery Channel ${index}`,
+          publishedAt: "2026-06-14T12:00:00Z",
+        },
+      }));
+      return mockYoutubeResponse({ items });
+    }, async () => {
+      const result = await runYouTubeDiscoveryIfDue(config, db, [], new Date("2026-06-14T13:00:00Z"));
+      assert.equal(result.ran, true);
+      assert.equal(result.apiCalls, 2);
+      assert.equal(result.videosFound, 100);
+      assert.equal(result.newVideos, 100);
+      assert.equal(result.activePoolSize, 100);
+    });
+    assert.equal(fetchCalls.length, 2);
+  } finally {
+    if (previousQueries === undefined) delete process.env.WORLD_CUP_TREND_QUERIES;
+    else process.env.WORLD_CUP_TREND_QUERIES = previousQueries;
+    db.close();
+  }
+});
+
+test("rolling YouTube stats refresh batches pool and detects 100 percent spikes", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wc-youtube-stats-"));
+  const previousQueries = process.env.WORLD_CUP_TREND_QUERIES;
+  process.env.WORLD_CUP_TREND_QUERIES = "FIFA World Cup 2026|football World Cup";
+  const config = controllerConfig({
+    dbFile: path.join(tempDir, "controller.sqlite"),
+    youtubeApiKeys: "test-key",
+    youtubeDiscoveryMaxPerRun: 100,
+    youtubeDiscoveryIntervalMinutes: 60,
+    youtubeStatsIntervalMinutes: 30,
+    youtubeTopicMinSpikeVideos: 10,
+    youtubeTopicMinChannels: 4,
+  });
+  const db = await openControllerDb(config);
+  try {
+    await withMockedFetch(async (url) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname.endsWith("/search")) {
+        const query = parsed.searchParams.get("q").replace(/\W+/g, "-").toLowerCase();
+        return mockYoutubeResponse({
+          items: Array.from({ length: 50 }, (_, index) => ({
+            id: { videoId: `${query}-${index}` },
+            snippet: {
+              title: `USA World Cup lineup pressure ${query} ${index}`,
+              channelTitle: `Channel ${index % 8}`,
+              publishedAt: "2026-06-14T12:00:00Z",
+            },
+          })),
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }, async () => {
+      await runYouTubeDiscoveryIfDue(config, db, [], new Date("2026-06-14T13:00:00Z"));
+    });
+
+    let statsCallCount = 0;
+    await withMockedFetch(async (url) => {
+      const parsed = new URL(String(url));
+      assert.equal(parsed.pathname, "/youtube/v3/videos");
+      statsCallCount += 1;
+      const ids = parsed.searchParams.get("id").split(",");
+      return mockYoutubeResponse({
+        items: ids.map((id) => ({
+          id,
+          snippet: {
+            title: `USA World Cup lineup pressure ${id}`,
+            channelTitle: `Channel ${id.split("-").at(-1) % 8}`,
+            publishedAt: "2026-06-14T12:00:00Z",
+          },
+          statistics: { viewCount: "1000", commentCount: "20" },
+        })),
+      });
+    }, async () => {
+      const first = await runYouTubeStatsRefreshIfDue(config, db, [], new Date("2026-06-14T13:30:00Z"));
+      assert.equal(first.batchesRequested, 2);
+      assert.equal(first.videosUpdated, 100);
+      assert.equal(first.spikeEligible, 0);
+    });
+    assert.equal(statsCallCount, 2);
+
+    await withMockedFetch(async (url) => {
+      const ids = new URL(String(url)).searchParams.get("id").split(",");
+      return mockYoutubeResponse({
+        items: ids.map((id) => ({
+          id,
+          snippet: {
+            title: `USA World Cup lineup pressure ${id}`,
+            channelTitle: `Channel ${id.split("-").at(-1) % 8}`,
+            publishedAt: "2026-06-14T12:00:00Z",
+          },
+          statistics: { viewCount: "2200", commentCount: "50" },
+        })),
+      });
+    }, async () => {
+      const second = await runYouTubeStatsRefreshIfDue(config, db, [], new Date("2026-06-14T14:00:00Z"));
+      assert.equal(second.batchesRequested, 2);
+      assert.equal(second.videosUpdated, 100);
+      assert.equal(second.spikeEligible, 100);
+    });
+  } finally {
+    if (previousQueries === undefined) delete process.env.WORLD_CUP_TREND_QUERIES;
+    else process.env.WORLD_CUP_TREND_QUERIES = previousQueries;
+    db.close();
+  }
+});
+
+test("rolling YouTube cluster requires 10 spike videos before creating workflow inputs", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wc-youtube-cluster-"));
+  const config = controllerConfig({
+    dbFile: path.join(tempDir, "controller.sqlite"),
+    youtubeApiKeys: "test-key",
+    youtubeTopicMinSpikeVideos: 10,
+    youtubeTopicMinChannels: 4,
+    youtubeTopicMinConfidence: 75,
+    youtubeClusterAnalyzer: "local",
+  });
+  const db = await openControllerDb(config);
+  try {
+    const nine = {
+      eligibleVideos: Array.from({ length: 9 }, (_, index) => ({
+        id: `usa-${index}`,
+        title: `USA World Cup lineup pressure ${index}`,
+        channelTitle: `Channel ${index % 4}`,
+        views: 2200,
+        comments: 50,
+        spike: { score: 90, deltaViews: 1200, growthPercent: 120 },
+      })),
+    };
+    const nineResult = await buildYouTubeClusterCandidates(config, db, [], nine, new Date("2026-06-14T14:00:00Z"));
+    assert.equal(nineResult.candidates.length, 0);
+
+    const ten = {
+      eligibleVideos: Array.from({ length: 10 }, (_, index) => ({
+        id: `usa-${index}`,
+        title: `USA World Cup lineup pressure ${index}`,
+        channelTitle: `Channel ${index % 4}`,
+        views: 2200,
+        comments: 50,
+        spike: { score: 90, deltaViews: 1200, growthPercent: 120 },
+      })),
+    };
+    const tenResult = await buildYouTubeClusterCandidates(config, db, [], ten, new Date("2026-06-14T14:30:00Z"));
+    assert.equal(tenResult.candidates.length, 1);
+    const inputs = workflowInputs(tenResult.candidates[0]);
+    assert.equal(inputs.topic.includes("USA"), true);
+    assert.equal(inputs.force, "true");
+  } finally {
+    db.close();
+  }
 });
 
 test("evergreen fallback can pass the gate when strict trend threshold would block normal trends", () => {
