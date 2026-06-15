@@ -179,6 +179,26 @@ test("ESPN event parsing creates VIP pre-match candidate inside configured windo
   assert.match(candidate.reason, /pre-match/i);
 });
 
+test("default ESPN pre-match window catches VIP fixtures up to three days out", () => {
+  const config = controllerConfig({ vipTeams: "France", vipPlayers: "" });
+  assert.equal(config.prematchWindowStartHours, 12);
+  assert.equal(config.prematchWindowEndHours, 72);
+
+  const match = {
+    id: "403",
+    name: "Senegal vs France",
+    kickoff: "2026-06-16T19:00:00Z",
+    status: "Scheduled",
+    completed: false,
+    home: "France",
+    away: "Senegal",
+    score: "Senegal 0 - 0 France",
+  };
+  const candidate = espnCandidateFromMatch(match, config, new Date("2026-06-14T16:00:00Z"));
+  assert.equal(candidate.type, "prediction");
+  assert.equal(candidate.source, "espn-scoreboard");
+});
+
 test("VIP team matching avoids substring false positives", () => {
   assert.equal(
     isVipMatch(
@@ -388,6 +408,38 @@ test("duplicate-only no-candidate scans do not spam Telegram notices", () => {
 
   assert.equal(decision.send, false);
   assert.match(decision.reason, /duplicate/i);
+});
+
+test("routine daily-limit no-candidate scans do not spam Telegram notices", () => {
+  const decision = noCandidateNoticeDecision(
+    {},
+    {
+      candidates: [
+        {
+          key: "fallback-limit",
+          score: 80,
+          gate: {
+            reasons: [
+              "daily trend limit reached (1/1)",
+              "trend cooldown active (24/120 minutes)",
+            ],
+          },
+        },
+      ],
+      diagnostics: {
+        espnCandidates: 0,
+        youtubeSpikeCandidates: 0,
+        youtubeCandidates: 0,
+        geminiTrendCandidate: false,
+        evergreenCandidate: true,
+      },
+    },
+    { skipNoticeCooldownMinutes: 180 },
+    new Date("2026-06-14T12:00:00Z"),
+  );
+
+  assert.equal(decision.send, false);
+  assert.match(decision.reason, /daily trend limit|cooldown/i);
 });
 
 test("non-duplicate no-candidate notices are throttled by notice key", () => {

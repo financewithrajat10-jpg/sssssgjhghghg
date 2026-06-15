@@ -10,21 +10,22 @@ const DEFAULT_RETRY_LIMIT = 0;
 const DEFAULT_WORKFLOW_FILE = "worldcup-pipeline.yml";
 const DEFAULT_BRANCH = "main";
 const DEFAULT_FETCH_TIMEOUT_MS = 45000;
-const DEFAULT_DAILY_TOTAL_LIMIT = 3;
-const DEFAULT_DAILY_TREND_LIMIT = 1;
-const DEFAULT_TREND_COOLDOWN_MINUTES = 120;
+const DEFAULT_DAILY_TOTAL_LIMIT = 6;
+const DEFAULT_DAILY_TREND_LIMIT = 3;
+const DEFAULT_TREND_COOLDOWN_MINUTES = 60;
 const DEFAULT_STALE_DISPATCH_RETRY_MINUTES = 120;
 const DEFAULT_INTENT_LLM_TIMEOUT_MS = 15000;
 const DEFAULT_INTENT_LLM_MODEL = "gemma-4-31b-it";
 const DEFAULT_ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard";
 const DEFAULT_MATCH_LOOKAHEAD_DAYS = 3;
-const DEFAULT_PREMATCH_WINDOW_HOURS = [12, 24];
+const DEFAULT_PREMATCH_WINDOW_HOURS = [12, 72];
 const DEFAULT_POSTMATCH_DELAY_MINUTES = 20;
 const DEFAULT_YOUTUBE_SCAN_MAX = 150;
 const DEFAULT_YOUTUBE_SPIKE_INTERVAL_MINUTES = 30;
 const DEFAULT_ANALYZER_MODEL = "gemini-3.1-flash-lite";
 const DEFAULT_SKIP_NOTICE_COOLDOWN_MINUTES = 180;
 const DUPLICATE_GATE_REASON = "duplicate candidate already dispatched";
+const ROUTINE_NO_CANDIDATE_REASON_PATTERNS = [/duplicate candidate already dispatched/i, /daily (?:total|trend) limit reached/i, /trend cooldown active/i];
 const INTENT_ACTIONS = new Set(["dispatch_specific", "discover_and_dispatch", "status", "help", "clarify"]);
 const INTENT_TYPES = new Set(["pre-tournament", "prediction", "postmatch", "breaking-news"]);
 const DEFAULT_VIP_TEAMS = [
@@ -1338,11 +1339,12 @@ function selectCandidate(candidates, state, config, now = new Date()) {
 function noCandidateNoticeDecision(state = {}, scan = {}, config = {}, now = new Date()) {
   const top = Array.isArray(scan.candidates) ? scan.candidates[0] || null : null;
   const reasons = Array.isArray(top?.gate?.reasons) ? top.gate.reasons.map(cleanText).filter(Boolean) : [];
-  if (reasons.includes(DUPLICATE_GATE_REASON)) {
+  const routineReason = reasons.find((reason) => ROUTINE_NO_CANDIDATE_REASON_PATTERNS.some((pattern) => pattern.test(reason)));
+  if (routineReason) {
     return {
       send: false,
       key: "",
-      reason: "duplicate candidate already dispatched",
+      reason: routineReason,
     };
   }
 

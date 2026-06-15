@@ -274,10 +274,14 @@ npm run worldcup:controller
   - `WORLD_CUP_WORKFLOW_FILE=worldcup-pipeline.yml`
   - `WORLD_CUP_CONTROLLER_INTERVAL_MINUTES=15`
   - `WORLD_CUP_TREND_THRESHOLD=95`
+  - `WORLD_CUP_CONTROLLER_DAILY_TOTAL_LIMIT=6`
+  - `WORLD_CUP_CONTROLLER_DAILY_TREND_LIMIT=3`
+  - `WORLD_CUP_CONTROLLER_TREND_COOLDOWN_MINUTES=60`
+  - `WORLD_CUP_CONTROLLER_SKIP_NOTICE_COOLDOWN_MINUTES=180`
   - `WORLD_CUP_CONTROLLER_DB_FILE=.tmp-worldcup/azure-controller-state.sqlite`
   - `WORLD_CUP_ESPN_ENABLED=true` enables ESPN scoreboard match-window triggers.
   - `WORLD_CUP_MATCH_LOOKAHEAD_DAYS=3`
-  - `WORLD_CUP_PREMATCH_WINDOW_HOURS=12,24`
+  - `WORLD_CUP_PREMATCH_WINDOW_HOURS=12,72`
   - `WORLD_CUP_POSTMATCH_DELAY_MINUTES=20`
   - `WORLD_CUP_VIP_TEAMS=Real Madrid|Barcelona|Manchester City|Arsenal|Bayern Munich|Liverpool|Paris Saint-Germain|Manchester United|Juventus|Inter Milan|Argentina|Portugal|France|Brazil|England|USA|USMNT|United States|Mexico|Canada`
   - `WORLD_CUP_VIP_PLAYERS=Messi|Ronaldo|Mbappe|Haaland|Yamal|Bellingham|Vinicius|De Bruyne|Pulisic|Neymar`
@@ -297,7 +301,7 @@ npm run worldcup:controller
   - `WORLD_CUP_INTENT_LLM_API_STYLE=openai-chat` for OpenAI-compatible chat endpoints, or `prompt` for simple local prompt endpoints.
   - `WORLD_CUP_INTENT_LLM_TIMEOUT_MS=15000`
   - `WORLD_CUP_FIXTURES_JSON=[{"date":"2026-06-12","teamA":"USA","teamB":"Paraguay","kickoff":"2026-06-13T02:00:00Z","topic":"USA vs Paraguay World Cup prediction"}]`
-- Prediction videos trigger when a fixture enters the 12-hour-before-kickoff window. Postmatch videos trigger after expected full-time plus a safety delay.
+- Prediction videos trigger when a VIP fixture is between 12 and 72 hours before kickoff by default. Postmatch videos trigger after expected full-time plus a safety delay.
 - ESPN VIP matches now create the main pre-match and post-match candidates. YouTube spike scans and the analyzer run before match-window candidates, and evergreen fallback runs last so the controller does not silently starve on empty trend data. The selected candidate is sent to the existing `worldcup-pipeline.yml` `workflow_dispatch` inputs so GitHub Actions starts the same scraping, evidence, content, render, and upload pipeline.
 - Telegram manual dispatch commands:
   - `/wc topic Ronaldo vs Messi 2026 World Cup bracket`
