@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
-import { buildMajorWorldCupAssetPacks, buildWorldCupAssetPack, generateWorldCupRun, rebuildWorldCupVisuals, renderWorldCupRun, runWorldCupScheduler, uploadWorldCupRun } from "./pipeline.mjs";
+import { buildMajorWorldCupAssetPacks, buildWorldCupAssetPack, generateWorldCupRun, rebuildWorldCupVisuals, renderWorldCupRun, runWorldCupScheduler, uploadWorldCupRun, uploadWorldCupRunToYouTube } from "./pipeline.mjs";
 
 function parseArgs(argv) {
   const args = {};
@@ -71,6 +71,7 @@ function summarize(run) {
     r2: run.r2,
     drive: run.drive,
     telegram: run.telegram,
+    youtube: run.youtube,
     warnings: run.warnings,
   };
 }
@@ -120,6 +121,11 @@ async function main() {
     render: boolArg(args.render, false),
     upload: boolArg(args.upload, false),
     uploadTarget: args.uploadTarget || args.destination,
+    youtubeUpload: boolArg(args.youtubeUpload ?? args.uploadYoutube, undefined),
+    youtubePrivacy: args.youtubePrivacy || args.youtube_privacy,
+    youtubeMaxPerDay: args.youtubeMaxPerDay || args.youtube_max_per_day,
+    youtubeNotifySubscribers: boolArg(args.youtubeNotifySubscribers ?? args.youtube_notify_subscribers, undefined),
+    youtubeMetadataModel: args.youtubeMetadataModel || args.youtube_metadata_model,
     bgm: boolArg(args.bgm ?? args.backgroundMusic, undefined),
     bgmFile: args.bgmFile || args.backgroundMusicFile,
     bgmMode: args.bgmMode,
@@ -176,9 +182,9 @@ async function main() {
     return;
   }
 
-  if (args.visualsOnly || args.rebuildVisuals || args.renderOnly || args.uploadOnly) {
+  if (args.visualsOnly || args.rebuildVisuals || args.renderOnly || args.uploadOnly || args.youtubeUploadOnly) {
     if (!args.id) {
-      throw new Error("--id is required for --visuals-only, --render-only, or --upload-only.");
+      throw new Error("--id is required for --visuals-only, --render-only, --upload-only, or --youtube-upload-only.");
     }
     let run = null;
     if (args.visualsOnly || args.rebuildVisuals) {
@@ -189,6 +195,9 @@ async function main() {
     }
     if (args.uploadOnly) {
       run = await uploadWorldCupRun(args.id, options);
+    }
+    if (args.youtubeUploadOnly) {
+      run = await uploadWorldCupRunToYouTube(args.id, { ...options, youtubeUpload: true });
     }
     console.log(JSON.stringify(summarize(run), null, 2));
     return;

@@ -215,6 +215,17 @@ GitHub Actions:
   - `GOOGLE_DRIVE_MAKE_PUBLIC=false`. Set to `true` only if you want generated files shared by link.
   - `GOOGLE_DRIVE_SCOPE=https://www.googleapis.com/auth/drive`
   - `WORLD_CUP_DRIVE_FALLBACK_TELEGRAM=true`
+- Optional YouTube publishing secrets:
+  - `YOUTUBE_CLIENT_ID`
+  - `YOUTUBE_CLIENT_SECRET`
+  - `YOUTUBE_REFRESH_TOKEN`
+- Optional YouTube publishing variables:
+  - `WORLD_CUP_YOUTUBE_UPLOAD=false`. Set to `true` only after a private test upload succeeds.
+  - `WORLD_CUP_YOUTUBE_PRIVACY=private`, `unlisted`, or `public`.
+  - `WORLD_CUP_YOUTUBE_MAX_PER_DAY=5` caps public/unlisted uploads from the local run index.
+  - `WORLD_CUP_YOUTUBE_NOTIFY_SUBSCRIBERS=false`
+  - `WORLD_CUP_YOUTUBE_METADATA_MODEL=gemini-3.1-flash-lite`
+- YouTube publishing is an additional final stage after render/upload. It uploads any non-empty rendered MP4 when enabled; V2 quality decisions are recorded as warnings only and do not block YouTube. Hard blockers are missing/empty MP4s, missing OAuth credentials, invalid metadata, YouTube API errors, or assets explicitly marked `rightsStatus: "blocked"`.
 - Optional upload target variable: `WORLD_CUP_UPLOAD_TARGET=auto`, `telegram`, `google-drive`, or `r2`.
 - Optional variable: `WORLD_CUP_STRATEGY=classic` or `viral2`. Keep `classic` when you want the baseline; switch to `viral2` for the stricter viral-content gates.
 - Optional V2 quality variables:

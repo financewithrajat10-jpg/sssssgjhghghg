@@ -11,7 +11,7 @@
     "worldcup:controller": "node worldcup/azure-controller.mjs",
     "worldcup:controller:dry": "node worldcup/azure-controller.mjs --once --dry-run --offline",
     "worldcup:youtube-health": "node worldcup/youtube-health.mjs",
-    "worldcup:controller:test": "node --test worldcup/azure-controller.intent.test.mjs worldcup/quality-v2.test.mjs worldcup/uploads.test.mjs"
+    "worldcup:controller:test": "node --test worldcup/azure-controller.intent.test.mjs worldcup/quality-v2.test.mjs worldcup/uploads.test.mjs worldcup/youtube.test.mjs"
   },
   "engines": {
     "node": ">=24"

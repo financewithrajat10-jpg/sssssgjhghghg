@@ -104,6 +104,11 @@ export const WORLD_CUP_V2_MAX_SCRIPT_RETRIES = Math.max(0, Math.min(4, Number(pr
 export const WORLD_CUP_V2_MAX_VISUAL_RETRIES = Math.max(0, Math.min(5, Number(process.env.WORLD_CUP_V2_MAX_VISUAL_RETRIES || 3) || 3));
 export const WORLD_CUP_V2_REQUIRE_ZERO_FALLBACKS = normalizeBool(process.env.WORLD_CUP_V2_REQUIRE_ZERO_FALLBACKS, true);
 export const WORLD_CUP_V2_TELEGRAM_SEND_FAILED_MP4 = normalizeBool(process.env.WORLD_CUP_V2_TELEGRAM_SEND_FAILED_MP4, true);
+export const WORLD_CUP_YOUTUBE_UPLOAD = normalizeBool(process.env.WORLD_CUP_YOUTUBE_UPLOAD, false);
+export const WORLD_CUP_YOUTUBE_PRIVACY = normalizeWorldCupYouTubePrivacy(process.env.WORLD_CUP_YOUTUBE_PRIVACY || "private");
+export const WORLD_CUP_YOUTUBE_MAX_PER_DAY = Math.max(0, Math.min(12, Number(process.env.WORLD_CUP_YOUTUBE_MAX_PER_DAY || 5) || 5));
+export const WORLD_CUP_YOUTUBE_NOTIFY_SUBSCRIBERS = normalizeBool(process.env.WORLD_CUP_YOUTUBE_NOTIFY_SUBSCRIBERS, false);
+export const WORLD_CUP_YOUTUBE_METADATA_MODEL = process.env.WORLD_CUP_YOUTUBE_METADATA_MODEL || LITE_TEXT_MODEL;
 export const GEMINI_RETRY_DELAYS_MS = String(process.env.WORLD_CUP_GEMINI_RETRY_DELAYS || "5000,10000,15000")
   .split(",")
   .map((delay) => Number(delay.trim()))
@@ -317,6 +322,14 @@ export function normalizeWorldCupStrategy(value) {
     return "viral2";
   }
   return "classic";
+}
+
+export function normalizeWorldCupYouTubePrivacy(value) {
+  const privacy = cleanText(value || "private").toLowerCase();
+  if (["public", "unlisted", "private"].includes(privacy)) {
+    return privacy;
+  }
+  return "private";
 }
 
 export function normalizeWorldCupCaptionPreset(value) {
@@ -1033,6 +1046,11 @@ export function normalizeWorldCupInput(input = {}) {
     language: cleanInputText(input.language) || DEFAULT_LANGUAGE,
     render: normalizeBool(input.render, false),
     upload: normalizeBool(input.upload, false),
+    youtubeUpload: normalizeBool(input.youtubeUpload ?? input.youtube_upload, WORLD_CUP_YOUTUBE_UPLOAD),
+    youtubePrivacy: normalizeWorldCupYouTubePrivacy(input.youtubePrivacy || input.youtube_privacy || WORLD_CUP_YOUTUBE_PRIVACY),
+    youtubeMaxPerDay: Math.max(0, Math.min(12, Number(input.youtubeMaxPerDay || input.youtube_max_per_day || WORLD_CUP_YOUTUBE_MAX_PER_DAY) || WORLD_CUP_YOUTUBE_MAX_PER_DAY)),
+    youtubeNotifySubscribers: normalizeBool(input.youtubeNotifySubscribers ?? input.youtube_notify_subscribers, WORLD_CUP_YOUTUBE_NOTIFY_SUBSCRIBERS),
+    youtubeMetadataModel: cleanInputText(input.youtubeMetadataModel || input.youtube_metadata_model || WORLD_CUP_YOUTUBE_METADATA_MODEL) || WORLD_CUP_YOUTUBE_METADATA_MODEL,
     offline: normalizeBool(input.offline, false),
     generateAudio: normalizeBool(input.generateAudio, true),
     source: cleanInputText(input.source) || "auto",

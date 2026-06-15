@@ -217,6 +217,7 @@ export async function createRunSkeleton(options) {
     r2: { mp4Key: "", publicUrl: "" },
     drive: { folderId: "", folderUrl: "", uploaded: [] },
     telegram: { uploadedAt: "", messages: [] },
+    youtube: { status: "", videoId: "", url: "" },
     sources: [],
     attributions: [],
     warnings: [],
@@ -302,6 +303,7 @@ export function runSummary(run) {
     r2: run.r2 || {},
     drive: run.drive || {},
     telegram: run.telegram || {},
+    youtube: run.youtube || {},
     files: run.files || {},
     warnings: (run.warnings || []).slice(0, 6),
   };

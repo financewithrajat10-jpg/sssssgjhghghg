@@ -43,6 +43,18 @@ on:
         description: "auto, telegram, google-drive, or r2"
         required: false
         default: "telegram"
+      youtube_upload:
+        description: "Upload rendered MP4 to YouTube"
+        required: false
+        default: "false"
+      youtube_privacy:
+        description: "private, unlisted, or public"
+        required: false
+        default: "private"
+      youtube_max_per_day:
+        description: "Max public/unlisted YouTube uploads per day"
+        required: false
+        default: "5"
       allow_needs_review_upload:
         description: "Upload private review MP4 even when QC says revise"
         required: false
@@ -106,9 +118,17 @@ env:
   TELEGRAM_THREAD_ID: ${{ vars.TELEGRAM_THREAD_ID }}
   WORLD_CUP_TELEGRAM_SEND_SIDECARS: ${{ vars.WORLD_CUP_TELEGRAM_SEND_SIDECARS || 'true' }}
   WORLD_CUP_DRIVE_FALLBACK_TELEGRAM: ${{ vars.WORLD_CUP_DRIVE_FALLBACK_TELEGRAM || 'true' }}
+  YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+  YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+  YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
   PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
   PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
   WORLD_CUP_UPLOAD_TARGET: ${{ vars.WORLD_CUP_UPLOAD_TARGET || 'telegram' }}
+  WORLD_CUP_YOUTUBE_UPLOAD: ${{ vars.WORLD_CUP_YOUTUBE_UPLOAD || 'false' }}
+  WORLD_CUP_YOUTUBE_PRIVACY: ${{ vars.WORLD_CUP_YOUTUBE_PRIVACY || 'private' }}
+  WORLD_CUP_YOUTUBE_MAX_PER_DAY: ${{ vars.WORLD_CUP_YOUTUBE_MAX_PER_DAY || '5' }}
+  WORLD_CUP_YOUTUBE_NOTIFY_SUBSCRIBERS: ${{ vars.WORLD_CUP_YOUTUBE_NOTIFY_SUBSCRIBERS || 'false' }}
+  WORLD_CUP_YOUTUBE_METADATA_MODEL: ${{ vars.WORLD_CUP_YOUTUBE_METADATA_MODEL || 'gemini-3.1-flash-lite' }}
   WORLD_CUP_MAX_VIDEOS_PER_DAY: ${{ vars.WORLD_CUP_MAX_VIDEOS_PER_DAY || '3' }}
   WORLD_CUP_SCHEDULE_HOURS: ${{ vars.WORLD_CUP_SCHEDULE_HOURS || '9,15,21' }}
   WORLD_CUP_DEFAULT_LANGUAGE: ${{ vars.WORLD_CUP_DEFAULT_LANGUAGE || 'en' }}
@@ -156,6 +176,9 @@ env:
   INPUT_RENDER: ${{ github.event.inputs.render || 'true' }}
   INPUT_UPLOAD: ${{ github.event.inputs.upload || 'true' }}
   INPUT_UPLOAD_TARGET: ${{ github.event.inputs.upload_target || vars.WORLD_CUP_UPLOAD_TARGET || 'telegram' }}
+  INPUT_YOUTUBE_UPLOAD: ${{ github.event.inputs.youtube_upload || vars.WORLD_CUP_YOUTUBE_UPLOAD || 'false' }}
+  INPUT_YOUTUBE_PRIVACY: ${{ github.event.inputs.youtube_privacy || vars.WORLD_CUP_YOUTUBE_PRIVACY || 'private' }}
+  INPUT_YOUTUBE_MAX_PER_DAY: ${{ github.event.inputs.youtube_max_per_day || vars.WORLD_CUP_YOUTUBE_MAX_PER_DAY || '5' }}
   INPUT_ALLOW_NEEDS_REVIEW_UPLOAD: ${{ github.event.inputs.allow_needs_review_upload || 'false' }}
   INPUT_QUALITY_MODE: ${{ github.event.inputs.quality_mode || vars.WORLD_CUP_QUALITY_MODE || 'v2' }}
   INPUT_MAX_SCRIPT_RETRIES: ${{ github.event.inputs.max_script_retries || vars.WORLD_CUP_V2_MAX_SCRIPT_RETRIES || '2' }}
@@ -208,6 +231,9 @@ jobs:
             --render "$INPUT_RENDER" \
             --upload "$INPUT_UPLOAD" \
             --upload-target "$INPUT_UPLOAD_TARGET" \
+            --youtube-upload "$INPUT_YOUTUBE_UPLOAD" \
+            --youtube-privacy "$INPUT_YOUTUBE_PRIVACY" \
+            --youtube-max-per-day "$INPUT_YOUTUBE_MAX_PER_DAY" \
             --allow-needs-review-upload "$INPUT_ALLOW_NEEDS_REVIEW_UPLOAD" \
             --quality-mode "$INPUT_QUALITY_MODE" \
             --max-script-retries "$INPUT_MAX_SCRIPT_RETRIES" \
@@ -272,6 +298,16 @@ jobs:
             if (!sentMp4) {
               throw new Error(`World Cup run ${run.id} did not record a Telegram MP4 delivery.`);
             }
+          }
+          const youtubeEnabled = /^(1|true|yes|on)$/i.test(String(process.env.INPUT_YOUTUBE_UPLOAD || process.env.WORLD_CUP_YOUTUBE_UPLOAD || ''));
+          if (youtubeEnabled) {
+            if (run.youtube?.status !== 'uploaded' || !run.youtube?.videoId) {
+              throw new Error(`World Cup run ${run.id} did not record a successful YouTube upload. Status=${run.youtube?.status || 'missing'}`);
+            }
+            if (!run.files?.youtube || !run.files?.youtubeMetadata) {
+              throw new Error(`World Cup run ${run.id} is missing YouTube sidecars.`);
+            }
+            console.log(`Verified YouTube upload: ${run.youtube.url || run.youtube.videoId}`);
           }
           if ((run.qualityMode === 'v2' || run.qualityV2?.mode === 'v2') && run.qualityV2?.finalDecision !== 'publish_candidate') {
             const reviewCopyAllowed = /^(1|true|yes|on)$/i.test(String(process.env.INPUT_TELEGRAM_SEND_FAILED_MP4 || process.env.WORLD_CUP_V2_TELEGRAM_SEND_FAILED_MP4 || ''));

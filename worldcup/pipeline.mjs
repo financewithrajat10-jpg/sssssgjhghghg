@@ -45,6 +45,11 @@ import {
   WORLD_CUP_V2_REQUIRE_ZERO_FALLBACKS,
   WORLD_CUP_V2_SCRIPT_PUBLISH_SCORE,
   WORLD_CUP_V2_TELEGRAM_SEND_FAILED_MP4,
+  WORLD_CUP_YOUTUBE_MAX_PER_DAY,
+  WORLD_CUP_YOUTUBE_METADATA_MODEL,
+  WORLD_CUP_YOUTUBE_NOTIFY_SUBSCRIBERS,
+  WORLD_CUP_YOUTUBE_PRIVACY,
+  WORLD_CUP_YOUTUBE_UPLOAD,
   WORLD_CUP_VOICE_VOLUME,
   VISUAL_REVIEW_MAX_ITEMS,
   VISUAL_SCOUT_PAGES,
@@ -97,6 +102,7 @@ import {
 } from "./modules/visuals.mjs";
 import { renderWorldCupRun, rebuildWorldCupVisuals } from "./modules/render.mjs";
 import { hasGoogleDriveCredentials, hasR2Credentials, hasTelegramCredentials, resolveWorldCupAsset, sendWorldCupTelegramAlert, uploadWorldCupRun } from "./modules/uploads.mjs";
+import { hasYouTubeCredentials, uploadWorldCupRunToYouTube, youtubeTelegramSummary } from "./modules/youtube.mjs";
 import { runWorldCupSchedulerImpl, scheduledHours } from "./modules/scheduler.mjs";
 import {
   addRetryLog,
@@ -117,6 +123,7 @@ export { buildMajorWorldCupAssetPacks, buildWorldCupAssetPack } from "./modules/
 export { listWorldCupRuns, readWorldCupRun } from "./modules/memory.mjs";
 export { renderWorldCupRun, rebuildWorldCupVisuals } from "./modules/render.mjs";
 export { resolveWorldCupAsset, uploadWorldCupRun } from "./modules/uploads.mjs";
+export { uploadWorldCupRunToYouTube } from "./modules/youtube.mjs";
 
 async function worldCupConfigSummary() {
   const keyInfo = await getActiveGeminiKey();
@@ -128,7 +135,15 @@ async function worldCupConfigSummary() {
     r2Ready: hasR2Credentials(),
     driveReady: Boolean(hasGoogleDriveCredentials() && (process.env.GOOGLE_DRIVE_FOLDER_ID || process.env.WORLD_CUP_GOOGLE_DRIVE_FOLDER_ID)),
     telegramReady: hasTelegramCredentials(),
+    youtubeReady: hasYouTubeCredentials(),
     uploadTarget: DEFAULT_UPLOAD_TARGET,
+    youtube: {
+      enabled: WORLD_CUP_YOUTUBE_UPLOAD,
+      privacy: WORLD_CUP_YOUTUBE_PRIVACY,
+      maxPerDay: WORLD_CUP_YOUTUBE_MAX_PER_DAY,
+      notifySubscribers: WORLD_CUP_YOUTUBE_NOTIFY_SUBSCRIBERS,
+      metadataModel: WORLD_CUP_YOUTUBE_METADATA_MODEL,
+    },
     strategy: DEFAULT_WORLD_CUP_STRATEGY,
     strategies: ["classic", "viral2"],
     quality: {
@@ -253,6 +268,34 @@ async function writeVisualSidecars(run) {
   run.files.attribution = await writeRunFile(run, "attribution.json", `${JSON.stringify(run.attributions, null, 2)}\n`, "utf8");
   run.files.rights = await writeRunFile(run, "rights.json", `${JSON.stringify(run.rightsManifest, null, 2)}\n`, "utf8");
   return run;
+}
+
+async function maybeUploadWorldCupRunToYouTube(run, input, options) {
+  if (!normalizeBool(options.youtubeUpload ?? input.youtubeUpload ?? input.youtube_upload, false)) {
+    return run;
+  }
+  const uploaded = await uploadWorldCupRunToYouTube(run.id, { ...input, ...options });
+  if (hasTelegramCredentials()) {
+    try {
+      await sendWorldCupTelegramAlert(uploaded, youtubeTelegramSummary(uploaded), "youtube-upload");
+      return await readWorldCupRun(uploaded.id);
+    } catch (error) {
+      const latest = await readWorldCupRun(uploaded.id);
+      latest.warnings = Array.from(new Set([...(latest.warnings || []), `YouTube Telegram confirmation failed: ${error.message}`]));
+      await saveRun(latest);
+      return latest;
+    }
+  }
+  return uploaded;
+}
+
+async function writeApiUsageSidecar(run) {
+  run = await readWorldCupRun(run.id);
+  run.apiUsage = getActiveWorldCupApiUsage() || run.apiUsage || {};
+  run.apiUsage.completedAt = nowIso();
+  run.files.apiUsage = await writeRunFile(run, "api-usage.json", `${JSON.stringify(run.apiUsage, null, 2)}\n`, "utf8");
+  await saveRun(run);
+  return await readWorldCupRun(run.id);
 }
 
 async function blockQualityV2Run(run, failedGate, options) {
@@ -638,7 +681,9 @@ async function generateWorldCupRun(input = {}) {
           telegramSendFailedMp4: true,
           allowNeedsReviewUpload: true,
         });
-        return await readWorldCupRun(run.id);
+        run = await readWorldCupRun(run.id);
+        run = await maybeUploadWorldCupRunToYouTube(run, input, options);
+        return await writeApiUsageSidecar(run);
       }
       if (hasTelegramCredentials() && !run.telegram?.messages?.some((message) => String(message.label || "").startsWith("v2-"))) {
         await sendWorldCupTelegramAlert(run, buildV2FailureAlert(run, run.status === "rendered_needs_review" ? "postRender" : "preRender"), "v2-upload-blocked").catch((error) => {
@@ -650,7 +695,8 @@ async function generateWorldCupRun(input = {}) {
       run.files.apiUsage = await writeRunFile(run, "api-usage.json", `${JSON.stringify(run.apiUsage, null, 2)}\n`, "utf8");
       await writeQualityV2Sidecars(run);
       await saveRun(run);
-      return await readWorldCupRun(run.id);
+      run = await maybeUploadWorldCupRunToYouTube(run, input, options);
+      return await writeApiUsageSidecar(run);
     }
     if (options.render && !run.files?.mp4) {
       throw new WorldCupError("Refusing to upload World Cup run because no MP4 was rendered.", {
@@ -663,7 +709,7 @@ async function generateWorldCupRun(input = {}) {
         },
       });
     }
-    const allowNeedsReviewUpload = normalizeBool(input.allowNeedsReviewUpload ?? input.allowReviewUpload, false);
+    const allowNeedsReviewUpload = normalizeBool(input.allowNeedsReviewUpload ?? input.allowReviewUpload, normalizeBool(options.youtubeUpload, false));
     if (!allowNeedsReviewUpload && (run.review?.status === "needs_review" || run.postRenderQuality?.decision === "revise" || run.postRenderQuality?.decision === "discard")) {
       throw new WorldCupError("Refusing to upload World Cup run because quality review did not pass.", {
         status: 422,
@@ -676,14 +722,10 @@ async function generateWorldCupRun(input = {}) {
         },
       });
     }
-    await uploadWorldCupRun(run.id, { ...input, ...options, requireMp4: true });
+    run = await uploadWorldCupRun(run.id, { ...input, ...options, requireMp4: true });
   }
-    run = await readWorldCupRun(run.id);
-    run.apiUsage = getActiveWorldCupApiUsage() || run.apiUsage || {};
-    run.apiUsage.completedAt = nowIso();
-    run.files.apiUsage = await writeRunFile(run, "api-usage.json", `${JSON.stringify(run.apiUsage, null, 2)}\n`, "utf8");
-    await saveRun(run);
-    return await readWorldCupRun(run.id);
+  run = await maybeUploadWorldCupRunToYouTube(run, input, options);
+  return await writeApiUsageSidecar(run);
   } finally {
     if (getActiveWorldCupApiUsage() === run.apiUsage) {
       setActiveWorldCupApiUsage(null);

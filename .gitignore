@@ -4,6 +4,7 @@
 .stock-keys.json
 node_modules/
 server.log
+.tmp/
 .server*.log
 .tmp-server*.log
 debug.log
