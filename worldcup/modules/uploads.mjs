@@ -807,30 +807,51 @@ export function isTelegramOversizeError(error) {
   const status = Number(error?.status || error?.details?.error_code || 0);
   const code = cleanText(error?.code);
   const description = cleanText(error?.details?.description || error?.message);
-  return code === "TELEGRAM_UPLOAD_FAILED" && status === 413 || /request entity too large|payload too large|file is too big/i.test(description);
+  return (code === "TELEGRAM_UPLOAD_FAILED" && status === 413) || /request entity too large|payload too large|file is too big/i.test(description);
 }
 
 async function uploadWorldCupRunAfterTelegramOversize(id, options = {}, originalError = null) {
   const warning = `Telegram rejected MP4 as too large${originalError?.message ? `: ${originalError.message}` : "."}`;
+  const fallbackErrors = [];
   if (hasGoogleDriveCredentials() && (process.env.GOOGLE_DRIVE_FOLDER_ID || process.env.WORLD_CUP_GOOGLE_DRIVE_FOLDER_ID)) {
     await appendWorldCupUploadWarning(id, `${warning} Falling back to Google Drive.`);
-    const uploaded = await uploadWorldCupRunToDrive(id);
-    await sendWorldCupTelegramAlert(
-      uploaded,
-      `${worldCupTelegramCaption(uploaded)}\nTelegram rejected the MP4 as too large, so it was uploaded to Google Drive instead:\n${uploaded.drive?.folderUrl || ""}`.trim(),
-      "telegram-oversize-drive-fallback",
-    ).catch((error) => appendWorldCupUploadWarning(id, `Telegram Drive fallback notice failed: ${error.message}`));
-    return uploaded;
+    try {
+      const uploaded = await uploadWorldCupRunToDrive(id);
+      await sendWorldCupTelegramAlert(
+        uploaded,
+        `${worldCupTelegramCaption(uploaded)}\nTelegram rejected the MP4 as too large, so it was uploaded to Google Drive instead:\n${uploaded.drive?.folderUrl || ""}`.trim(),
+        "telegram-oversize-drive-fallback",
+      ).catch((error) => appendWorldCupUploadWarning(id, `Telegram Drive fallback notice failed: ${error.message}`));
+      return uploaded;
+    } catch (error) {
+      fallbackErrors.push(`Google Drive: ${error.message}`);
+      await appendWorldCupUploadWarning(id, `Google Drive fallback after Telegram oversize failed: ${error.message}`);
+    }
   }
   if (hasR2Credentials()) {
     await appendWorldCupUploadWarning(id, `${warning} Falling back to R2.`);
-    const uploaded = await uploadWorldCupRunToR2(id);
-    await sendWorldCupTelegramAlert(
-      uploaded,
-      `${worldCupTelegramCaption(uploaded)}\nTelegram rejected the MP4 as too large, so it was uploaded to R2 instead:\n${uploaded.r2?.publicUrl || ""}`.trim(),
-      "telegram-oversize-r2-fallback",
-    ).catch((error) => appendWorldCupUploadWarning(id, `Telegram R2 fallback notice failed: ${error.message}`));
-    return uploaded;
+    try {
+      const uploaded = await uploadWorldCupRunToR2(id);
+      await sendWorldCupTelegramAlert(
+        uploaded,
+        `${worldCupTelegramCaption(uploaded)}\nTelegram rejected the MP4 as too large, so it was uploaded to R2 instead:\n${uploaded.r2?.publicUrl || ""}`.trim(),
+        "telegram-oversize-r2-fallback",
+      ).catch((error) => appendWorldCupUploadWarning(id, `Telegram R2 fallback notice failed: ${error.message}`));
+      return uploaded;
+    } catch (error) {
+      fallbackErrors.push(`R2: ${error.message}`);
+      await appendWorldCupUploadWarning(id, `R2 fallback after Telegram oversize failed: ${error.message}`);
+    }
+  }
+  if (fallbackErrors.length) {
+    throw new WorldCupError("Telegram rejected the MP4 as too large and all configured fallback uploads failed.", {
+      status: 502,
+      code: "TELEGRAM_OVERSIZE_FALLBACKS_FAILED",
+      details: {
+        originalError: originalError?.message || "",
+        fallbackErrors,
+      },
+    });
   }
   throw originalError;
 }

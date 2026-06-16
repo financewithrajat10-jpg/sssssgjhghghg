@@ -270,8 +270,17 @@ async function writeVisualSidecars(run) {
   return run;
 }
 
+function youtubeUploadRequested(input = {}, options = {}) {
+  return normalizeBool(options.youtubeUpload ?? input.youtubeUpload ?? input.youtube_upload, false);
+}
+
+function addUniqueRunWarning(run, warning) {
+  run.warnings = Array.from(new Set([...(run.warnings || []), cleanText(warning)].filter(Boolean)));
+  return run;
+}
+
 async function maybeUploadWorldCupRunToYouTube(run, input, options) {
-  if (!normalizeBool(options.youtubeUpload ?? input.youtubeUpload ?? input.youtube_upload, false)) {
+  if (!youtubeUploadRequested(input, options)) {
     return run;
   }
   const uploaded = await uploadWorldCupRunToYouTube(run.id, { ...input, ...options });
@@ -287,6 +296,29 @@ async function maybeUploadWorldCupRunToYouTube(run, input, options) {
     }
   }
   return uploaded;
+}
+
+export async function uploadWorldCupRunForPrimaryDelivery(run, input, options, uploadOptions = {}, uploader = uploadWorldCupRun) {
+  try {
+    return await uploader(run.id, { ...input, ...options, ...uploadOptions });
+  } catch (error) {
+    const latest = await readWorldCupRun(run.id);
+    addUniqueRunWarning(latest, `Primary Telegram/Drive/R2 delivery failed before YouTube stage: ${error.message}`);
+    latest.delivery = {
+      ...(latest.delivery || {}),
+      primaryUpload: {
+        status: "failed",
+        failedAt: nowIso(),
+        code: error.code || "PRIMARY_UPLOAD_FAILED",
+        message: error.message,
+      },
+    };
+    await saveRun(latest);
+    if (youtubeUploadRequested(input, options) && latest.files?.mp4) {
+      return latest;
+    }
+    throw error;
+  }
 }
 
 async function writeApiUsageSidecar(run) {
@@ -674,14 +706,11 @@ async function generateWorldCupRun(input = {}) {
         run.warnings.push("V2 review-copy upload enabled: sending rendered MP4 to Telegram with quality score/issues.");
         await writeQualityV2Sidecars(run);
         await saveRun(run);
-        await uploadWorldCupRun(run.id, {
-          ...input,
-          ...options,
+        run = await uploadWorldCupRunForPrimaryDelivery(run, input, options, {
           requireMp4: true,
           telegramSendFailedMp4: true,
           allowNeedsReviewUpload: true,
         });
-        run = await readWorldCupRun(run.id);
         run = await maybeUploadWorldCupRunToYouTube(run, input, options);
         return await writeApiUsageSidecar(run);
       }
@@ -722,7 +751,7 @@ async function generateWorldCupRun(input = {}) {
         },
       });
     }
-    run = await uploadWorldCupRun(run.id, { ...input, ...options, requireMp4: true });
+    run = await uploadWorldCupRunForPrimaryDelivery(run, input, options, { requireMp4: true });
   }
   run = await maybeUploadWorldCupRunToYouTube(run, input, options);
   return await writeApiUsageSidecar(run);

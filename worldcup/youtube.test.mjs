@@ -10,6 +10,8 @@ import {
   youtubeUploadGate,
 } from "./modules/youtube.mjs";
 import { createRunSkeleton, readWorldCupRun, saveRun, writeRunFile } from "./modules/memory.mjs";
+import { WorldCupError } from "./modules/utils.mjs";
+import { uploadWorldCupRunForPrimaryDelivery } from "./pipeline.mjs";
 
 function mockResponse({ ok = true, status = 200, json = {}, text = "", headers = {} } = {}) {
   return {
@@ -239,5 +241,70 @@ test("mock YouTube upload writes youtube sidecars and ignores V2 decision", asyn
     assert.equal(saved.files.youtubeMetadata, "youtube-metadata.json");
     assert.equal(calls.filter((call) => call.method === "POST").length, 2);
     assert.equal(calls.filter((call) => call.method === "PUT").length, 1);
+  });
+});
+
+test("YouTube upload can complete after primary Telegram or Drive delivery fails", async () => {
+  await withYouTubeEnv(async () => {
+    const run = await createRunSkeleton({
+      id: "youtube-test-primary-delivery-failed",
+      type: "prediction",
+      strategy: "viral2",
+      qualityMode: "v2",
+      strictPublish: false,
+      topic: "Norway vs Iraq pressure angle",
+      match: { teamA: "Norway", teamB: "Iraq", date: "2026-06-16" },
+      language: "en",
+    });
+    run.selectedScript = {
+      title: "Norway vs Iraq Pressure",
+      text: "Norway and Iraq are walking into a pressure test. Tell me your score prediction.",
+    };
+    run.qualityV2 = { mode: "v2", finalDecision: "blocked", issues: ["Advisory only."] };
+    run.rightsManifest = { assets: [], blocked: [] };
+    run.files.mp4 = await writeRunFile(run, "youtube-primary-fallback-test.mp4", Buffer.from("fake mp4 bytes"));
+    await saveRun(run);
+
+    const afterPrimaryFailure = await uploadWorldCupRunForPrimaryDelivery(
+      run,
+      { youtubeUpload: true },
+      { youtubeUpload: true },
+      { requireMp4: true },
+      async () => {
+        throw new WorldCupError("Telegram rejected the MP4 as too large and Google Drive fallback failed.", {
+          status: 502,
+          code: "TELEGRAM_OVERSIZE_FALLBACKS_FAILED",
+        });
+      },
+    );
+
+    assert.equal(afterPrimaryFailure.delivery.primaryUpload.status, "failed");
+    assert.match(afterPrimaryFailure.warnings.join("\n"), /Primary Telegram\/Drive\/R2 delivery failed/i);
+
+    await withMockedFetch(async (url, options = {}) => {
+      if (String(url).includes("oauth2.googleapis.com/token")) {
+        return mockResponse({ json: { access_token: "access-token", expires_in: 3600 } });
+      }
+      if (String(url).includes("upload/youtube/v3/videos") && options.method === "POST") {
+        return mockResponse({ text: "{}", headers: { location: "https://upload.youtube.test/primary-fallback-session" } });
+      }
+      if (String(url) === "https://upload.youtube.test/primary-fallback-session") {
+        return mockResponse({ json: { id: "yt-video-primary-fallback", kind: "youtube#video" } });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }, async () => {
+      await uploadWorldCupRunToYouTube(run.id, {
+        offline: true,
+        youtubeUpload: true,
+        youtubePrivacy: "public",
+        youtubeMaxPerDay: 99,
+      });
+    });
+
+    const saved = await readWorldCupRun(run.id);
+    assert.equal(saved.youtube.status, "uploaded");
+    assert.equal(saved.youtube.videoId, "yt-video-primary-fallback");
+    assert.equal(saved.youtube.privacyStatus, "public");
+    assert.equal(saved.delivery.primaryUpload.status, "failed");
   });
 });

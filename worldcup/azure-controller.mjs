@@ -14,6 +14,7 @@ const DEFAULT_DAILY_TOTAL_LIMIT = 6;
 const DEFAULT_DAILY_TREND_LIMIT = 3;
 const DEFAULT_TREND_COOLDOWN_MINUTES = 60;
 const DEFAULT_STALE_DISPATCH_RETRY_MINUTES = 120;
+const DEFAULT_FAILED_DISPATCH_COOLDOWN_MINUTES = 360;
 const DEFAULT_INTENT_LLM_TIMEOUT_MS = 15000;
 const DEFAULT_INTENT_LLM_MODEL = "gemma-4-31b-it";
 const DEFAULT_ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard";
@@ -247,6 +248,7 @@ function controllerConfig(args = {}) {
     dailyTrendLimit: Math.max(0, numberArg(args.dailyTrendLimit || process.env.WORLD_CUP_CONTROLLER_DAILY_TREND_LIMIT, DEFAULT_DAILY_TREND_LIMIT)),
     trendCooldownMinutes: Math.max(0, numberArg(args.trendCooldownMinutes || process.env.WORLD_CUP_CONTROLLER_TREND_COOLDOWN_MINUTES, DEFAULT_TREND_COOLDOWN_MINUTES)),
     staleDispatchRetryMinutes: Math.max(15, numberArg(args.staleDispatchRetryMinutes || process.env.WORLD_CUP_CONTROLLER_STALE_DISPATCH_RETRY_MINUTES, DEFAULT_STALE_DISPATCH_RETRY_MINUTES)),
+    failedDispatchCooldownMinutes: Math.max(0, numberArg(args.failedDispatchCooldownMinutes || process.env.WORLD_CUP_CONTROLLER_FAILED_DISPATCH_COOLDOWN_MINUTES, DEFAULT_FAILED_DISPATCH_COOLDOWN_MINUTES)),
     requiredGroundedSources: Math.max(1, numberArg(args.requiredGroundedSources || process.env.WORLD_CUP_CONTROLLER_REQUIRED_GROUNDED_SOURCES, 2)),
     enableGeminiTrends: boolArg(args.enableGeminiTrends ?? process.env.WORLD_CUP_CONTROLLER_ENABLE_GEMINI_TRENDS, false),
     majorOnlyScheduled: boolArg(args.majorOnlyScheduled ?? process.env.WORLD_CUP_CONTROLLER_MAJOR_ONLY_SCHEDULED, true),
@@ -892,7 +894,12 @@ function wasDispatched(state, candidate, config = {}) {
   if (!entry) return false;
   const conclusion = cleanText(entry.workflowRun?.conclusion || "").toLowerCase();
   if (["failure", "cancelled", "timed_out", "action_required"].includes(conclusion) || entry.error) {
-    return false;
+    const failedMs = Date.parse(entry.workflowRun?.completedAt || entry.workflowRun?.completed_at || entry.updatedAt || entry.dispatchedAt || entry.attemptedAt || "");
+    const cooldownMinutes = Number(config.failedDispatchCooldownMinutes ?? DEFAULT_FAILED_DISPATCH_COOLDOWN_MINUTES);
+    if (!Number.isFinite(failedMs)) {
+      return true;
+    }
+    return Date.now() - failedMs < cooldownMinutes * 60 * 1000;
   }
   if (!conclusion && !entry.workflowRun?.id) {
     const dispatchedMs = Date.parse(entry.dispatchedAt || entry.attemptedAt || "");
@@ -2292,6 +2299,9 @@ function workflowInputs(candidate) {
     render: "true",
     upload: "true",
     upload_target: "telegram",
+    youtube_upload: cleanText(process.env.WORLD_CUP_YOUTUBE_UPLOAD || "true"),
+    youtube_privacy: cleanText(process.env.WORLD_CUP_YOUTUBE_PRIVACY || "public"),
+    youtube_max_per_day: cleanText(process.env.WORLD_CUP_YOUTUBE_MAX_PER_DAY || "5"),
     allow_needs_review_upload: "false",
     quality_mode: "v2",
     max_script_retries: "2",
@@ -2897,6 +2907,7 @@ async function processTelegramCommands(config, state, db) {
           url: completed.html_url,
           status: completed.status,
           conclusion: completed.conclusion,
+          completedAt: completed.updated_at || completed.run_started_at || nowIso(),
         };
         await sendTelegram(config, `Manual World Cup run completed: ${completed.conclusion}\n${completed.html_url}`).catch(() => null);
       } else {
@@ -3045,6 +3056,7 @@ async function runControllerOnce(config) {
         url: completed.html_url,
         status: completed.status,
         conclusion: completed.conclusion,
+        completedAt: completed.updated_at || completed.run_started_at || nowIso(),
       };
       if (completed.conclusion !== "success" && config.retryLimit > 0) {
         await sendTelegram(config, `GitHub run failed, retrying once: ${completed.html_url}`).catch(() => null);

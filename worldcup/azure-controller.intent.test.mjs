@@ -176,6 +176,54 @@ test("duplicate gate still blocks auto-discovered trend candidates", () => {
   assert.match(result.candidates[0].gate.reasons.join(" "), /duplicate/i);
 });
 
+test("recent failed fixture dispatch is cooled down instead of immediately repeated", () => {
+  const candidate = {
+    type: "prediction",
+    topic: "Norway vs Iraq match planning: the pressure angle fans should watch",
+    teamA: "Norway",
+    teamB: "Iraq",
+    kickoff: "2026-06-16T22:00:00.000Z",
+    score: 100,
+    reason: "Scheduled match window.",
+    source: "espn-scoreboard",
+  };
+  const config = {
+    dailyTotalLimit: 5,
+    dailyTrendLimit: 5,
+    failedDispatchCooldownMinutes: 360,
+    requiredGroundedSources: 1,
+    staleDispatchRetryMinutes: 120,
+    trendCooldownMinutes: 0,
+    trendThreshold: 95,
+  };
+
+  const recentFailed = {
+    dispatched: {
+      [candidateKey(candidate)]: {
+        candidate,
+        dispatchedAt: new Date().toISOString(),
+        workflowRun: { id: 123, conclusion: "failure", completedAt: new Date().toISOString() },
+      },
+    },
+  };
+  const blocked = selectCandidate([candidate], recentFailed, config);
+  assert.equal(blocked.selected, null);
+  assert.match(blocked.candidates[0].gate.reasons.join(" "), /duplicate/i);
+
+  const oldFailedAt = new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString();
+  const oldFailed = {
+    dispatched: {
+      [candidateKey(candidate)]: {
+        candidate,
+        dispatchedAt: oldFailedAt,
+        workflowRun: { id: 124, conclusion: "failure", completedAt: oldFailedAt },
+      },
+    },
+  };
+  const allowed = selectCandidate([candidate], oldFailed, config);
+  assert.equal(allowed.selected?.key, candidateKey(candidate));
+});
+
 test("ESPN event parsing creates VIP pre-match candidate inside configured window", () => {
   const event = {
     id: "401",
@@ -344,32 +392,56 @@ test("ESPN candidate maps to GitHub workflow_dispatch inputs", () => {
     score: 100,
     source: "espn-scoreboard",
   };
-  const inputs = workflowInputs(candidate);
-  assert.deepEqual(Object.keys(inputs).sort(), [
-    "allow_needs_review_upload",
-    "date",
-    "force",
-    "kickoff",
-    "match_id",
-    "max_script_retries",
-    "max_visual_retries",
-    "mode",
-    "quality_mode",
-    "render",
-    "strategy",
-    "strict_publish",
-    "team_a",
-    "team_b",
-    "telegram_send_failed_mp4",
-    "topic",
-    "upload",
-    "upload_target",
-  ]);
-  assert.equal(inputs.mode, "prediction");
-  assert.equal(inputs.match_id, "espn-401");
-  assert.equal(inputs.team_a, "Argentina");
-  assert.equal(inputs.team_b, "Brazil");
-  assert.equal(inputs.topic, candidate.topic);
+  const previous = {
+    WORLD_CUP_YOUTUBE_UPLOAD: process.env.WORLD_CUP_YOUTUBE_UPLOAD,
+    WORLD_CUP_YOUTUBE_PRIVACY: process.env.WORLD_CUP_YOUTUBE_PRIVACY,
+    WORLD_CUP_YOUTUBE_MAX_PER_DAY: process.env.WORLD_CUP_YOUTUBE_MAX_PER_DAY,
+  };
+  process.env.WORLD_CUP_YOUTUBE_UPLOAD = "true";
+  process.env.WORLD_CUP_YOUTUBE_PRIVACY = "public";
+  process.env.WORLD_CUP_YOUTUBE_MAX_PER_DAY = "5";
+  try {
+    const inputs = workflowInputs(candidate);
+    assert.deepEqual(Object.keys(inputs).sort(), [
+      "allow_needs_review_upload",
+      "date",
+      "force",
+      "kickoff",
+      "match_id",
+      "max_script_retries",
+      "max_visual_retries",
+      "mode",
+      "quality_mode",
+      "render",
+      "strategy",
+      "strict_publish",
+      "team_a",
+      "team_b",
+      "telegram_send_failed_mp4",
+      "topic",
+      "upload",
+      "upload_target",
+      "youtube_max_per_day",
+      "youtube_privacy",
+      "youtube_upload",
+    ]);
+    assert.equal(inputs.mode, "prediction");
+    assert.equal(inputs.match_id, "espn-401");
+    assert.equal(inputs.team_a, "Argentina");
+    assert.equal(inputs.team_b, "Brazil");
+    assert.equal(inputs.topic, candidate.topic);
+    assert.equal(inputs.youtube_upload, "true");
+    assert.equal(inputs.youtube_privacy, "public");
+    assert.equal(inputs.youtube_max_per_day, "5");
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
 });
 
 test("legacy trigger config defaults off", () => {

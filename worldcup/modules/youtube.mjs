@@ -651,9 +651,18 @@ export async function uploadWorldCupRunToYouTube(id, options = {}) {
 
 export function youtubeTelegramSummary(run = {}) {
   const youtube = run.youtube || {};
+  const githubRunUrl =
+    process.env.GITHUB_REPOSITORY && process.env.GITHUB_RUN_ID
+      ? `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+      : "";
+  const identityLines = [
+    run.id ? `World Cup run: ${run.id}` : "",
+    githubRunUrl ? `GitHub run: ${githubRunUrl}` : "",
+  ];
   if (youtube.status === "uploaded") {
     return [
       "YouTube upload complete",
+      ...identityLines,
       youtube.url || (youtube.videoId ? `${YOUTUBE_WATCH_BASE_URL}${encodeURIComponent(youtube.videoId)}` : ""),
       `Privacy: ${youtube.privacyStatus || ""}`,
       `Title: ${youtube.metadata?.title || ""}`,
@@ -667,6 +676,7 @@ export function youtubeTelegramSummary(run = {}) {
   }
   return [
     "YouTube upload did not complete",
+    ...identityLines,
     `Status: ${youtube.status || "unknown"}`,
     youtube.error ? `Error: ${youtube.error}` : "",
     youtube.hardFails?.length ? `Hard fails: ${youtube.hardFails.join(" | ")}` : "",
