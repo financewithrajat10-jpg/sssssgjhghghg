@@ -256,10 +256,10 @@ test("ESPN event parsing creates VIP pre-match candidate inside configured windo
   assert.match(candidate.reason, /pre-match/i);
 });
 
-test("default ESPN pre-match window catches VIP fixtures up to three days out", () => {
+test("default ESPN pre-match trigger fires around 36 hours before kickoff", () => {
   const config = controllerConfig({ vipTeams: "France", vipPlayers: "" });
-  assert.equal(config.prematchWindowStartHours, 12);
-  assert.equal(config.prematchWindowEndHours, 72);
+  assert.equal(config.prematchTargetHours, 36);
+  assert.equal(config.postmatchDelayMinutes, 15);
 
   const match = {
     id: "403",
@@ -271,9 +271,11 @@ test("default ESPN pre-match window catches VIP fixtures up to three days out", 
     away: "Senegal",
     score: "Senegal 0 - 0 France",
   };
-  const candidate = espnCandidateFromMatch(match, config, new Date("2026-06-14T16:00:00Z"));
+  assert.equal(espnCandidateFromMatch(match, config, new Date("2026-06-14T16:00:00Z")), null);
+  const candidate = espnCandidateFromMatch(match, config, new Date("2026-06-15T07:00:00Z"));
   assert.equal(candidate.type, "prediction");
   assert.equal(candidate.source, "espn-scoreboard");
+  assert.equal(candidate.dueAt, "2026-06-15T07:00:00.000Z");
 });
 
 test("broad ESPN filter catches major World Cup pre-match fixtures beyond the old env list", () => {
@@ -381,6 +383,101 @@ test("ESPN final status creates post-match candidate", () => {
   );
   assert.equal(candidate.type, "postmatch");
   assert.match(candidate.reason, /Final score/i);
+});
+
+test("ESPN post-match waits for first completed seen time plus delay", () => {
+  const match = {
+    id: "402",
+    name: "France vs England",
+    kickoff: "2026-06-14T18:00:00Z",
+    status: "Final",
+    completed: true,
+    firstCompletedSeenAt: "2026-06-14T20:10:00Z",
+    home: "England",
+    away: "France",
+    score: "England 1 - 2 France",
+  };
+  const config = { vipTeams: ["France"], vipPlayers: [], postmatchDelayMinutes: 15, postmatchMaxAgeHours: 12 };
+  assert.equal(espnCandidateFromMatch(match, config, new Date("2026-06-14T20:20:00Z")), null);
+  const candidate = espnCandidateFromMatch(match, config, new Date("2026-06-14T20:25:00Z"));
+  assert.equal(candidate.type, "postmatch");
+  assert.equal(candidate.dueAt, "2026-06-14T20:25:00.000Z");
+});
+
+test("source types are scheduled equally by due time instead of hard priority", () => {
+  const trend = {
+    type: "pre-tournament",
+    topic: "Germany World Cup reaction trend",
+    teamA: "Germany",
+    teamB: "",
+    kickoff: "",
+    score: 95,
+    source: "youtube-spike-cluster",
+    dueAt: "2026-06-14T10:00:00Z",
+    evidence: Array.from({ length: 10 }, (_, index) => ({ title: `Germany trend ${index}`, channelTitle: `Channel ${index}` })),
+  };
+  const prediction = {
+    type: "prediction",
+    topic: "France vs England match planning: the pressure angle fans should watch",
+    teamA: "France",
+    teamB: "England",
+    kickoff: "2026-06-16T22:00:00Z",
+    score: 100,
+    source: "espn-scoreboard",
+    dueAt: "2026-06-15T10:00:00Z",
+  };
+  const result = selectCandidate([prediction, trend], { dispatched: {} }, {
+    dailyTotalLimit: 10,
+    dailyTrendLimit: 10,
+    failedDispatchCooldownMinutes: 360,
+    requiredGroundedSources: 1,
+    staleDispatchRetryMinutes: 120,
+    trendCooldownMinutes: 0,
+    trendThreshold: 90,
+  }, new Date("2026-06-15T12:00:00Z"));
+  assert.equal(result.selected?.topic, trend.topic);
+});
+
+test("ESPN match dispatches do not consume the YouTube trend quota", () => {
+  const trend = {
+    type: "pre-tournament",
+    topic: "Germany World Cup reaction trend",
+    teamA: "Germany",
+    teamB: "",
+    kickoff: "",
+    score: 95,
+    source: "youtube-spike-cluster",
+    dueAt: "2026-06-16T10:00:00Z",
+    evidence: Array.from({ length: 10 }, (_, index) => ({ title: `Germany trend ${index}`, channelTitle: `Channel ${index}` })),
+  };
+  const espn = {
+    type: "prediction",
+    topic: "France vs England match planning: the pressure angle fans should watch",
+    teamA: "France",
+    teamB: "England",
+    kickoff: "2026-06-16T22:00:00Z",
+    score: 100,
+    source: "espn-scoreboard",
+  };
+  const state = {
+    dispatched: {
+      [candidateKey(espn)]: {
+        candidate: espn,
+        dispatchedAt: "2026-06-16T01:00:00.000Z",
+        workflowRun: { id: 1, conclusion: "success" },
+      },
+    },
+  };
+  const result = selectCandidate([trend], state, {
+    dailyTotalLimit: 10,
+    dailyTrendLimit: 1,
+    failedDispatchCooldownMinutes: 360,
+    requiredGroundedSources: 1,
+    staleDispatchRetryMinutes: 120,
+    trendCooldownMinutes: 0,
+    trendThreshold: 90,
+  }, new Date("2026-06-16T12:00:00Z"));
+  assert.equal(result.selected?.topic, trend.topic);
 });
 
 test("ESPN candidate maps to GitHub workflow_dispatch inputs", () => {

@@ -19,8 +19,10 @@ const DEFAULT_INTENT_LLM_TIMEOUT_MS = 15000;
 const DEFAULT_INTENT_LLM_MODEL = "gemma-4-31b-it";
 const DEFAULT_ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard";
 const DEFAULT_MATCH_LOOKAHEAD_DAYS = 3;
-const DEFAULT_PREMATCH_WINDOW_HOURS = [12, 72];
-const DEFAULT_POSTMATCH_DELAY_MINUTES = 20;
+const DEFAULT_PREMATCH_TARGET_HOURS = 36;
+const DEFAULT_PREMATCH_GRACE_MINUTES = 30;
+const DEFAULT_POSTMATCH_DELAY_MINUTES = 15;
+const DEFAULT_POSTMATCH_MAX_AGE_HOURS = 12;
 const DEFAULT_YOUTUBE_SCAN_MAX = 100;
 const DEFAULT_YOUTUBE_DISCOVERY_INTERVAL_MINUTES = 60;
 const DEFAULT_YOUTUBE_DISCOVERY_MAX_PER_RUN = 100;
@@ -208,13 +210,6 @@ function listArg(value, fallback = []) {
     .filter(Boolean);
 }
 
-function prematchWindowArg(value) {
-  const parts = listArg(value, DEFAULT_PREMATCH_WINDOW_HOURS.map(String)).map(Number).filter(Number.isFinite);
-  const first = Math.max(0, parts[0] ?? DEFAULT_PREMATCH_WINDOW_HOURS[0]);
-  const second = Math.max(first, parts[1] ?? DEFAULT_PREMATCH_WINDOW_HOURS[1]);
-  return [first, second];
-}
-
 function safeJsonParse(text, fallback = null) {
   try {
     return JSON.parse(text);
@@ -230,10 +225,11 @@ function jsonText(value) {
 function controllerConfig(args = {}) {
   const repo = cleanText(args.repo || process.env.WORLD_CUP_GITHUB_REPO || process.env.GITHUB_REPOSITORY || "financewithrajat10-jpg/Money-Printing-Machine");
   const [owner, repoName] = repo.split("/");
-  const prematchWindowHours = prematchWindowArg(args.prematchWindowHours || process.env.WORLD_CUP_PREMATCH_WINDOW_HOURS);
   const explicitYouTubeKeys = listArg(args.youtubeApiKeys || process.env.WORLD_CUP_YOUTUBE_API_KEYS || process.env.YOUTUBE_API_KEYS, []);
   const primaryYouTubeKey = cleanText(process.env.YOUTUBE_API_KEY || process.env.GOOGLE_API_KEY || explicitYouTubeKeys[0] || "");
   const youtubeApiKeys = [...new Set([...explicitYouTubeKeys, primaryYouTubeKey].map(cleanText).filter(Boolean))];
+  const prematchTargetHours = Math.max(0, numberArg(args.prematchTargetHours || process.env.WORLD_CUP_PREMATCH_TARGET_HOURS, DEFAULT_PREMATCH_TARGET_HOURS));
+  const prematchGraceMinutes = Math.max(1, numberArg(args.prematchGraceMinutes || process.env.WORLD_CUP_PREMATCH_GRACE_MINUTES, DEFAULT_PREMATCH_GRACE_MINUTES));
   return {
     owner,
     repo: repoName,
@@ -266,9 +262,12 @@ function controllerConfig(args = {}) {
     espnEnabled: boolArg(args.espnEnabled ?? process.env.WORLD_CUP_ESPN_ENABLED, true),
     espnScoreboardUrl: cleanText(args.espnScoreboardUrl || process.env.WORLD_CUP_ESPN_SCOREBOARD_URL || DEFAULT_ESPN_SCOREBOARD_URL),
     matchLookaheadDays: Math.max(0, numberArg(args.matchLookaheadDays || process.env.WORLD_CUP_MATCH_LOOKAHEAD_DAYS, DEFAULT_MATCH_LOOKAHEAD_DAYS)),
-    prematchWindowStartHours: prematchWindowHours[0],
-    prematchWindowEndHours: prematchWindowHours[1],
+    prematchTargetHours,
+    prematchGraceMinutes,
+    prematchWindowStartHours: Math.max(0, prematchTargetHours - prematchGraceMinutes / 60),
+    prematchWindowEndHours: prematchTargetHours,
     postmatchDelayMinutes: Math.max(0, numberArg(args.postmatchDelayMinutes || process.env.WORLD_CUP_POSTMATCH_DELAY_MINUTES, DEFAULT_POSTMATCH_DELAY_MINUTES)),
+    postmatchMaxAgeHours: Math.max(1, numberArg(args.postmatchMaxAgeHours || process.env.WORLD_CUP_POSTMATCH_MAX_AGE_HOURS, DEFAULT_POSTMATCH_MAX_AGE_HOURS)),
     vipTeams: listArg(args.vipTeams || process.env.WORLD_CUP_VIP_TEAMS, DEFAULT_VIP_TEAMS),
     vipPlayers: listArg(args.vipPlayers || process.env.WORLD_CUP_VIP_PLAYERS, DEFAULT_VIP_PLAYERS),
     youtubeSpikeEnabled: boolArg(args.youtubeSpikeEnabled ?? process.env.WORLD_CUP_YOUTUBE_SPIKE_ENABLED, true),
@@ -380,6 +379,7 @@ function initControllerDb(db) {
       away TEXT,
       score TEXT,
       snapshot_json TEXT NOT NULL,
+      first_completed_seen_at TEXT,
       last_seen_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS youtube_videos (
@@ -477,6 +477,7 @@ function initControllerDb(db) {
   ensureSqliteColumn(db, "youtube_videos", "last_spike_eligible", "INTEGER NOT NULL DEFAULT 0");
   ensureSqliteColumn(db, "youtube_videos", "last_rejection_reason", "TEXT");
   ensureSqliteColumn(db, "youtube_videos", "active", "INTEGER NOT NULL DEFAULT 1");
+  ensureSqliteColumn(db, "espn_matches", "first_completed_seen_at", "TEXT");
 }
 
 function readMetaState(db) {
@@ -600,10 +601,10 @@ function recordScan(db, scan = {}) {
   );
 }
 
-function recordEspnMatches(db, matches = [], scannedAt = nowIso()) {
+function recordEspnMatches(db, matches = [], scannedAt = nowIso(), config = {}) {
   const stmt = db.prepare(`
-    INSERT INTO espn_matches(match_id, name, kickoff, status, home, away, score, snapshot_json, last_seen_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO espn_matches(match_id, name, kickoff, status, home, away, score, snapshot_json, first_completed_seen_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(match_id) DO UPDATE SET
       name = excluded.name,
       kickoff = excluded.kickoff,
@@ -612,9 +613,18 @@ function recordEspnMatches(db, matches = [], scannedAt = nowIso()) {
       away = excluded.away,
       score = excluded.score,
       snapshot_json = excluded.snapshot_json,
+      first_completed_seen_at = COALESCE(espn_matches.first_completed_seen_at, excluded.first_completed_seen_at),
       last_seen_at = excluded.last_seen_at
   `);
   for (const match of matches) {
+    const existing = db.prepare("SELECT first_completed_seen_at FROM espn_matches WHERE match_id = ?").get(cleanText(match.id));
+    const kickoffMs = Date.parse(match.kickoff || "");
+    const scannedMs = Date.parse(scannedAt);
+    const postmatchMaxAgeMs = Math.max(1, Number(config.postmatchMaxAgeHours || DEFAULT_POSTMATCH_MAX_AGE_HOURS)) * 36e5;
+    const estimatedCompletedMs = Number.isFinite(kickoffMs) ? expectedFullTimeMs(kickoffMs) : NaN;
+    const completionIsFreshEnough = Number.isFinite(estimatedCompletedMs) && Number.isFinite(scannedMs) && scannedMs - estimatedCompletedMs <= postmatchMaxAgeMs;
+    const firstCompletedSeenAt = cleanText(existing?.first_completed_seen_at) || (match.completed && completionIsFreshEnough ? scannedAt : "");
+    match.firstCompletedSeenAt = firstCompletedSeenAt;
     stmt.run(
       cleanText(match.id),
       cleanText(match.name),
@@ -624,6 +634,7 @@ function recordEspnMatches(db, matches = [], scannedAt = nowIso()) {
       cleanText(match.away),
       cleanText(match.score),
       jsonText(match),
+      firstCompletedSeenAt,
       scannedAt,
     );
   }
@@ -1101,9 +1112,14 @@ function espnCandidateFromMatch(match = {}, config = {}, now = new Date()) {
   const kickoffMs = Date.parse(match.kickoff || "");
   if (!Number.isFinite(kickoffMs)) return null;
   const nowMs = now.getTime();
+  const targetHours = Number(config.prematchTargetHours ?? config.prematchWindowEndHours ?? DEFAULT_PREMATCH_TARGET_HOURS);
+  const legacyStartHours = Number(config.prematchWindowStartHours);
+  const legacyEndHours = Number(config.prematchWindowEndHours);
+  const fallbackGraceMinutes = Number.isFinite(legacyStartHours) && Number.isFinite(legacyEndHours) ? Math.max(1, (legacyEndHours - legacyStartHours) * 60) : DEFAULT_PREMATCH_GRACE_MINUTES;
+  const graceMinutes = Number(config.prematchGraceMinutes ?? fallbackGraceMinutes);
+  const preTriggerMs = kickoffMs - Math.max(0, targetHours) * 36e5;
+  const preGraceMs = Math.max(1, graceMinutes) * 60 * 1000;
   const timeUntilHours = (kickoffMs - nowMs) / 36e5;
-  const preMin = Number(config.prematchWindowStartHours ?? DEFAULT_PREMATCH_WINDOW_HOURS[0]);
-  const preMax = Number(config.prematchWindowEndHours ?? DEFAULT_PREMATCH_WINDOW_HOURS[1]);
   const base = {
     teamA: match.away,
     teamB: match.home,
@@ -1112,25 +1128,30 @@ function espnCandidateFromMatch(match = {}, config = {}, now = new Date()) {
     source: "espn-scoreboard",
     espn: match,
   };
-  if (timeUntilHours >= preMin && timeUntilHours <= preMax) {
+  if (!match.completed && nowMs >= preTriggerMs && nowMs <= preTriggerMs + preGraceMs) {
     return {
       ...base,
       type: "prediction",
       topic: `${match.away} vs ${match.home} match planning: the pressure angle fans should watch`,
       score: 100,
-      reason: `ESPN VIP pre-match window (${Math.round(timeUntilHours * 10) / 10} hours before kickoff).`,
+      reason: `ESPN VIP pre-match 36-hour trigger (${Math.round(timeUntilHours * 10) / 10} hours before kickoff).`,
       timing: "espn-prematch",
+      dueAt: new Date(preTriggerMs).toISOString(),
     };
   }
   const postDelayMs = Number(config.postmatchDelayMinutes ?? DEFAULT_POSTMATCH_DELAY_MINUTES) * 60 * 1000;
-  if (match.completed && nowMs >= kickoffMs + postDelayMs) {
+  const completionSeenMs = Date.parse(match.firstCompletedSeenAt || match.completedSeenAt || match.completedAt || "");
+  const completionBasisMs = Number.isFinite(completionSeenMs) ? completionSeenMs : expectedFullTimeMs(kickoffMs);
+  const postmatchMaxAgeMs = Math.max(1, Number(config.postmatchMaxAgeHours || DEFAULT_POSTMATCH_MAX_AGE_HOURS)) * 36e5;
+  if (match.completed && nowMs >= completionBasisMs + postDelayMs && nowMs - completionBasisMs <= postmatchMaxAgeMs) {
     return {
       ...base,
       type: "postmatch",
       topic: `${match.away} vs ${match.home} post-match analysis: the result everyone is reacting to`,
       score: 99,
-      reason: `ESPN final-status trigger. Final score: ${match.score}.`,
+      reason: `ESPN final-status trigger ${Math.round(postDelayMs / 60000)} minutes after match completion. Final score: ${match.score}.`,
       timing: "espn-postmatch",
+      dueAt: new Date(completionBasisMs + postDelayMs).toISOString(),
     };
   }
   return null;
@@ -1165,7 +1186,7 @@ async function fetchEspnMatches(config, warnings, now = new Date()) {
 async function buildEspnCandidates(config, state, db, warnings, now = new Date()) {
   if (config.offline || !config.espnEnabled) return [];
   const matches = await fetchEspnMatches(config, warnings, now);
-  recordEspnMatches(db, matches, nowIso());
+  recordEspnMatches(db, matches, nowIso(), config);
   const candidates = matches.map((match) => espnCandidateFromMatch(match, config, now)).filter(Boolean);
   if (!matches.length) warnings.push("ESPN returned no soccer matches for the configured lookahead window.");
   if (matches.length && !candidates.length) warnings.push(`ESPN returned ${matches.length} matches, but none were VIP matches inside pre/post trigger windows.`);
@@ -1987,6 +2008,7 @@ async function buildYouTubeClusterCandidates(config, db, warnings, statsSummary 
       recordTopicClusterAttempt(db, summary);
       return { candidates: [], diagnostics: summary };
     }
+    candidate.dueAt ||= attemptedAt;
     summary.status = "success";
     summary.clusterCount = 1;
     summary.strongestSize = Number(candidate.clusterSize || candidate.evidence?.length || spikeVideos.length);
@@ -2129,6 +2151,10 @@ function isSpikeCandidate(candidate) {
   return ["gemini-topic-analyzer", "youtube-spike-cluster", "youtube-spike"].includes(candidate?.source);
 }
 
+function isTrendCandidate(candidate) {
+  return isSpikeCandidate(candidate) || ["youtube", "gemini-search-grounding"].includes(candidate?.source);
+}
+
 function dispatchedEntries(state) {
   return Object.values(state.dispatched || {}).filter(Boolean);
 }
@@ -2136,7 +2162,7 @@ function dispatchedEntries(state) {
 function dispatchStatsForToday(state, now = new Date()) {
   const day = now.toISOString().slice(0, 10);
   const entries = dispatchedEntries(state).filter((entry) => cleanText(entry.dispatchedAt).slice(0, 10) === day);
-  const trendEntries = entries.filter((entry) => entry.candidate?.source !== "fixture-scheduler");
+  const trendEntries = entries.filter((entry) => isTrendCandidate(entry.candidate));
   const lastTrendAt = trendEntries
     .map((entry) => cleanText(entry.dispatchedAt))
     .filter(Boolean)
@@ -2214,15 +2240,18 @@ function candidateGate(candidate, state, config, now = new Date()) {
   };
 }
 
-function candidatePriority(candidate) {
-  if (isSpikeCandidate(candidate)) return 400;
-  if (candidate?.source === "espn-scoreboard" && candidate.type === "prediction") return 320;
-  if (candidate?.source === "espn-scoreboard" && candidate.type === "postmatch") return 310;
-  if (candidate?.source === "fixture-scheduler") return 300;
-  if (candidate?.source === "gemini-search-grounding") return 250;
-  if (candidate?.source === "youtube") return 220;
-  if (isFallbackCandidate(candidate)) return 100;
-  return 0;
+function candidateDueAtMs(candidate, config = {}, now = new Date()) {
+  const explicitMs = Date.parse(candidate?.dueAt || "");
+  if (Number.isFinite(explicitMs)) return explicitMs;
+  const kickoffMs = Date.parse(candidate?.kickoff || "");
+  if (Number.isFinite(kickoffMs) && candidate?.type === "prediction") {
+    const targetHours = Number(config.prematchTargetHours ?? DEFAULT_PREMATCH_TARGET_HOURS);
+    return kickoffMs - Math.max(0, targetHours) * 36e5;
+  }
+  if (Number.isFinite(kickoffMs) && candidate?.type === "postmatch") {
+    return expectedFullTimeMs(kickoffMs) + Number(config.postmatchDelayMinutes ?? DEFAULT_POSTMATCH_DELAY_MINUTES) * 60 * 1000;
+  }
+  return now.getTime();
 }
 
 function selectCandidate(candidates, state, config, now = new Date()) {
@@ -2230,9 +2259,9 @@ function selectCandidate(candidates, state, config, now = new Date()) {
     .filter((candidate) => candidate?.topic)
     .map((candidate) => {
       const enriched = { ...candidate, key: candidateKey(candidate), duplicate: wasDispatched(state, candidate, config) };
-      return { ...enriched, gate: candidateGate(enriched, state, config, now) };
+      return { ...enriched, dueAt: enriched.dueAt || new Date(candidateDueAtMs(enriched, config, now)).toISOString(), gate: candidateGate(enriched, state, config, now) };
     })
-    .sort((a, b) => candidatePriority(b) - candidatePriority(a) || b.score - a.score);
+    .sort((a, b) => candidateDueAtMs(a, config, now) - candidateDueAtMs(b, config, now) || b.score - a.score);
   const selected = sorted.find((candidate) => candidate.gate?.allowed);
   return { selected: selected || null, candidates: sorted };
 }
