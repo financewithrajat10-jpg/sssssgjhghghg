@@ -44,17 +44,17 @@ on:
         required: false
         default: "telegram"
       youtube_upload:
-        description: "Upload rendered MP4 to YouTube"
+        description: "Upload rendered MP4 to YouTube; blank uses repo variable"
         required: false
-        default: "false"
+        default: ""
       youtube_privacy:
-        description: "private, unlisted, or public"
+        description: "private, unlisted, or public; blank uses repo variable"
         required: false
-        default: "private"
+        default: ""
       youtube_max_per_day:
-        description: "Max public/unlisted YouTube uploads per day"
+        description: "Max public/unlisted YouTube uploads per day; blank uses repo variable"
         required: false
-        default: "5"
+        default: ""
       allow_needs_review_upload:
         description: "Upload private review MP4 even when QC says revise"
         required: false
