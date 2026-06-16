@@ -2302,11 +2302,11 @@ function workflowInputs(candidate) {
     youtube_upload: cleanText(process.env.WORLD_CUP_YOUTUBE_UPLOAD || "true"),
     youtube_privacy: cleanText(process.env.WORLD_CUP_YOUTUBE_PRIVACY || "public"),
     youtube_max_per_day: cleanText(process.env.WORLD_CUP_YOUTUBE_MAX_PER_DAY || "5"),
-    allow_needs_review_upload: "false",
+    allow_needs_review_upload: cleanText(process.env.WORLD_CUP_CONTROLLER_ALLOW_NEEDS_REVIEW_UPLOAD || "true"),
     quality_mode: "v2",
     max_script_retries: "2",
     max_visual_retries: "3",
-    strict_publish: "true",
+    strict_publish: cleanText(process.env.WORLD_CUP_CONTROLLER_STRICT_PUBLISH || "false"),
     telegram_send_failed_mp4: "true",
     force: "true",
   };
@@ -2314,6 +2314,106 @@ function workflowInputs(candidate) {
 
 function workflowRunUrl(config, runId) {
   return `https://github.com/${config.repoFullName}/actions/runs/${runId}`;
+}
+
+function candidateLooksMatchVideo(candidate = {}) {
+  return (
+    isScheduledMatchCandidate(candidate) ||
+    ["prediction", "postmatch"].includes(cleanText(candidate.type).toLowerCase()) ||
+    Boolean(cleanText(candidate.teamA) && cleanText(candidate.teamB))
+  );
+}
+
+function zipEntries(buffer) {
+  const data = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
+  const eocdSignature = 0x06054b50;
+  const centralSignature = 0x02014b50;
+  const minOffset = Math.max(0, data.length - 0xffff - 22);
+  let eocdOffset = -1;
+  for (let offset = data.length - 22; offset >= minOffset; offset -= 1) {
+    if (data.readUInt32LE(offset) === eocdSignature) {
+      eocdOffset = offset;
+      break;
+    }
+  }
+  if (eocdOffset < 0) return [];
+  const entryCount = data.readUInt16LE(eocdOffset + 10);
+  const centralOffset = data.readUInt32LE(eocdOffset + 16);
+  const entries = [];
+  let offset = centralOffset;
+  for (let index = 0; index < entryCount && offset + 46 <= data.length; index += 1) {
+    if (data.readUInt32LE(offset) !== centralSignature) break;
+    const compressedSize = data.readUInt32LE(offset + 20);
+    const uncompressedSize = data.readUInt32LE(offset + 24);
+    const nameLength = data.readUInt16LE(offset + 28);
+    const extraLength = data.readUInt16LE(offset + 30);
+    const commentLength = data.readUInt16LE(offset + 32);
+    const nameStart = offset + 46;
+    const nameEnd = nameStart + nameLength;
+    if (nameEnd > data.length) break;
+    entries.push({
+      name: data.toString("utf8", nameStart, nameEnd),
+      compressedSize,
+      uncompressedSize,
+    });
+    offset = nameEnd + extraLength + commentLength;
+  }
+  return entries;
+}
+
+function mp4EvidenceFromZip(buffer) {
+  const entries = zipEntries(buffer);
+  const mp4Entries = entries.filter((entry) => /\.mp4$/i.test(entry.name) && Math.max(Number(entry.uncompressedSize || 0), Number(entry.compressedSize || 0)) > 0);
+  return {
+    hasMp4: mp4Entries.length > 0,
+    mp4Entries: mp4Entries.slice(0, 5),
+    entryCount: entries.length,
+  };
+}
+
+async function workflowRunMp4Evidence(config, runId) {
+  const data = await githubRequest(config, `/repos/${config.owner}/${config.repo}/actions/runs/${runId}/artifacts?per_page=20`);
+  const artifacts = (data.artifacts || []).filter((artifact) => !artifact.expired);
+  const checked = [];
+  for (const artifact of artifacts) {
+    try {
+      const response = await fetchWithControllerTimeout(`https://api.github.com/repos/${config.owner}/${config.repo}/actions/artifacts/${artifact.id}/zip`, {
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${config.githubToken}`,
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "world-cup-azure-controller",
+        },
+      }, config.fetchTimeoutMs);
+      if (!response.ok) {
+        checked.push({ id: artifact.id, name: artifact.name, error: `artifact zip HTTP ${response.status}` });
+        continue;
+      }
+      const evidence = mp4EvidenceFromZip(Buffer.from(await response.arrayBuffer()));
+      checked.push({ id: artifact.id, name: artifact.name, ...evidence });
+      if (evidence.hasMp4) {
+        return { hasMp4: true, artifacts: checked };
+      }
+    } catch (error) {
+      checked.push({ id: artifact.id, name: artifact.name, error: error.message });
+    }
+  }
+  return { hasMp4: false, artifacts: checked };
+}
+
+function controllerWorkflowConclusion(candidate, completed, mp4Evidence = {}) {
+  const githubConclusion = cleanText(completed?.conclusion || "");
+  if (githubConclusion === "success") {
+    return { conclusion: "success", githubConclusion, cloudSuccessReason: "" };
+  }
+  if (candidateLooksMatchVideo(candidate) && mp4Evidence?.hasMp4) {
+    return {
+      conclusion: "success",
+      githubConclusion,
+      cloudSuccessReason: "mp4_artifact_present",
+    };
+  }
+  return { conclusion: githubConclusion || "unknown", githubConclusion, cloudSuccessReason: "" };
 }
 
 async function githubRequest(config, pathname, { method = "GET", body = null } = {}) {
@@ -2902,14 +3002,25 @@ async function processTelegramCommands(config, state, db) {
       if (workflowRun) {
         await sendTelegram(config, `GitHub workflow started:\n${workflowRun.html_url || workflowRunUrl(config, workflowRun.id)}`).catch(() => null);
         const completed = await pollWorkflowRun(config, workflowRun.id);
+        const mp4Evidence =
+          completed.conclusion === "success"
+            ? { hasMp4: false, skipped: "workflow_success" }
+            : await workflowRunMp4Evidence(config, workflowRun.id).catch((error) => ({ hasMp4: false, error: error.message }));
+        const classified = controllerWorkflowConclusion(selected, completed, mp4Evidence);
         dispatch.workflowRun = {
           id: completed.id,
           url: completed.html_url,
           status: completed.status,
-          conclusion: completed.conclusion,
+          conclusion: classified.conclusion,
+          githubConclusion: classified.githubConclusion,
+          cloudSuccessReason: classified.cloudSuccessReason,
+          mp4Evidence,
           completedAt: completed.updated_at || completed.run_started_at || nowIso(),
         };
-        await sendTelegram(config, `Manual World Cup run completed: ${completed.conclusion}\n${completed.html_url}`).catch(() => null);
+        const completionText = classified.cloudSuccessReason
+          ? `Manual World Cup run completed for cloud: success\nGitHub conclusion: ${completed.conclusion}\nReason: MP4 artifact was produced.\n${completed.html_url}`
+          : `Manual World Cup run completed: ${completed.conclusion}\n${completed.html_url}`;
+        await sendTelegram(config, completionText).catch(() => null);
       } else {
         dispatch.workflowRun = { warning: "Could not locate workflow run after dispatch." };
         await sendTelegram(config, "Manual World Cup workflow dispatched, but controller could not locate the run yet.").catch(() => null);
@@ -3051,18 +3162,29 @@ async function runControllerOnce(config) {
     }
     if (workflowRun) {
       const completed = await pollWorkflowRun(config, workflowRun.id);
+      const mp4Evidence =
+        completed.conclusion === "success"
+          ? { hasMp4: false, skipped: "workflow_success" }
+          : await workflowRunMp4Evidence(config, workflowRun.id).catch((error) => ({ hasMp4: false, error: error.message }));
+      const classified = controllerWorkflowConclusion(selected, completed, mp4Evidence);
       dispatch.workflowRun = {
         id: completed.id,
         url: completed.html_url,
         status: completed.status,
-        conclusion: completed.conclusion,
+        conclusion: classified.conclusion,
+        githubConclusion: classified.githubConclusion,
+        cloudSuccessReason: classified.cloudSuccessReason,
+        mp4Evidence,
         completedAt: completed.updated_at || completed.run_started_at || nowIso(),
       };
-      if (completed.conclusion !== "success" && config.retryLimit > 0) {
+      if (dispatch.workflowRun.conclusion !== "success" && config.retryLimit > 0) {
         await sendTelegram(config, `GitHub run failed, retrying once: ${completed.html_url}`).catch(() => null);
         await dispatchWorkflow(config, selected);
       }
-      await sendTelegram(config, `GitHub World Cup run completed: ${completed.conclusion}\n${completed.html_url}`).catch(() => null);
+      const completionText = classified.cloudSuccessReason
+        ? `GitHub World Cup run completed for cloud: success\nGitHub conclusion: ${completed.conclusion}\nReason: MP4 artifact was produced.\n${completed.html_url}`
+        : `GitHub World Cup run completed: ${completed.conclusion}\n${completed.html_url}`;
+      await sendTelegram(config, completionText).catch(() => null);
     } else {
       dispatch.workflowRun = { warning: "Could not locate workflow run after dispatch." };
       await sendTelegram(config, "GitHub workflow dispatched, but controller could not locate the run yet.").catch(() => null);
@@ -3105,6 +3227,7 @@ async function main() {
 export {
   buildEvergreenFallbackCandidate,
   candidateKey,
+  controllerWorkflowConclusion,
   controllerConfig,
   espnCandidateFromMatch,
   initControllerDb,
@@ -3119,6 +3242,7 @@ export {
   parseTelegramIntentCommand,
   parseTelegramWorldCupCommand,
   persistControllerState,
+  mp4EvidenceFromZip,
   runYouTubeDiscoveryIfDue,
   runYouTubeStatsRefreshIfDue,
   buildYouTubeClusterCandidates,

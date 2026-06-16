@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   buildEvergreenFallbackCandidate,
   candidateKey,
+  controllerWorkflowConclusion,
   controllerConfig,
   espnCandidateFromMatch,
   intentToWorldCupCommand,
@@ -18,6 +19,7 @@ import {
   parseGemmaIntentPayload,
   parseTelegramWorldCupCommand,
   persistControllerState,
+  mp4EvidenceFromZip,
   runYouTubeDiscoveryIfDue,
   runYouTubeStatsRefreshIfDue,
   buildYouTubeClusterCandidates,
@@ -430,6 +432,9 @@ test("ESPN candidate maps to GitHub workflow_dispatch inputs", () => {
     assert.equal(inputs.team_a, "Argentina");
     assert.equal(inputs.team_b, "Brazil");
     assert.equal(inputs.topic, candidate.topic);
+    assert.equal(inputs.allow_needs_review_upload, "true");
+    assert.equal(inputs.strict_publish, "false");
+    assert.equal(inputs.telegram_send_failed_mp4, "true");
     assert.equal(inputs.youtube_upload, "true");
     assert.equal(inputs.youtube_privacy, "public");
     assert.equal(inputs.youtube_max_per_day, "5");
@@ -442,6 +447,86 @@ test("ESPN candidate maps to GitHub workflow_dispatch inputs", () => {
       }
     }
   }
+});
+
+test("cloud workflow classifier accepts failed GitHub run when match MP4 artifact exists", () => {
+  const candidate = {
+    type: "prediction",
+    topic: "Norway vs Iraq match planning: the pressure angle fans should watch",
+    teamA: "Norway",
+    teamB: "Iraq",
+    kickoff: "2026-06-16T22:00:00.000Z",
+    source: "espn-scoreboard",
+  };
+  const classified = controllerWorkflowConclusion(candidate, { conclusion: "failure" }, { hasMp4: true });
+  assert.equal(classified.conclusion, "success");
+  assert.equal(classified.githubConclusion, "failure");
+  assert.equal(classified.cloudSuccessReason, "mp4_artifact_present");
+});
+
+test("cloud workflow classifier keeps non-MP4 failures retryable", () => {
+  const candidate = {
+    type: "prediction",
+    topic: "Norway vs Iraq match planning: the pressure angle fans should watch",
+    teamA: "Norway",
+    teamB: "Iraq",
+    kickoff: "2026-06-16T22:00:00.000Z",
+    source: "espn-scoreboard",
+  };
+  const classified = controllerWorkflowConclusion(candidate, { conclusion: "failure" }, { hasMp4: false });
+  assert.equal(classified.conclusion, "failure");
+  assert.equal(classified.githubConclusion, "failure");
+  assert.equal(classified.cloudSuccessReason, "");
+});
+
+test("artifact ZIP MP4 detector finds non-empty MP4 entries", () => {
+  const name = Buffer.from("runs/demo/video.mp4");
+  const payload = Buffer.from("mp4");
+  const localHeader = Buffer.alloc(30);
+  localHeader.writeUInt32LE(0x04034b50, 0);
+  localHeader.writeUInt16LE(20, 4);
+  localHeader.writeUInt16LE(0, 6);
+  localHeader.writeUInt16LE(0, 8);
+  localHeader.writeUInt32LE(0, 10);
+  localHeader.writeUInt32LE(0, 14);
+  localHeader.writeUInt32LE(payload.length, 18);
+  localHeader.writeUInt32LE(payload.length, 22);
+  localHeader.writeUInt16LE(name.length, 26);
+  localHeader.writeUInt16LE(0, 28);
+  const local = Buffer.concat([localHeader, name, payload]);
+
+  const centralHeader = Buffer.alloc(46);
+  centralHeader.writeUInt32LE(0x02014b50, 0);
+  centralHeader.writeUInt16LE(20, 4);
+  centralHeader.writeUInt16LE(20, 6);
+  centralHeader.writeUInt16LE(0, 8);
+  centralHeader.writeUInt16LE(0, 10);
+  centralHeader.writeUInt32LE(0, 12);
+  centralHeader.writeUInt32LE(0, 16);
+  centralHeader.writeUInt32LE(payload.length, 20);
+  centralHeader.writeUInt32LE(payload.length, 24);
+  centralHeader.writeUInt16LE(name.length, 28);
+  centralHeader.writeUInt16LE(0, 30);
+  centralHeader.writeUInt16LE(0, 32);
+  centralHeader.writeUInt16LE(0, 34);
+  centralHeader.writeUInt16LE(0, 36);
+  centralHeader.writeUInt32LE(0, 38);
+  centralHeader.writeUInt32LE(0, 42);
+  const central = Buffer.concat([centralHeader, name]);
+
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(0, 4);
+  eocd.writeUInt16LE(0, 6);
+  eocd.writeUInt16LE(1, 8);
+  eocd.writeUInt16LE(1, 10);
+  eocd.writeUInt32LE(central.length, 12);
+  eocd.writeUInt32LE(local.length, 16);
+  eocd.writeUInt16LE(0, 20);
+
+  const evidence = mp4EvidenceFromZip(Buffer.concat([local, central, eocd]));
+  assert.equal(evidence.hasMp4, true);
+  assert.equal(evidence.mp4Entries[0].name, "runs/demo/video.mp4");
 });
 
 test("legacy trigger config defaults off", () => {
