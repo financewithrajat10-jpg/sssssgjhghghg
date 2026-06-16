@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { scoreCaptionAudioGateV2, scoreStoryboardGateV2 } from "./modules/quality-v2.mjs";
+import { scoreCaptionAudioGateV2, scoreStoryboardGateV2, visualGateRetryStalled } from "./modules/quality-v2.mjs";
 
 function visualSegments(count) {
   return Array.from({ length: count }, (_, index) => ({
@@ -42,6 +42,30 @@ test("multiple missing central entity overlays still block pre-render publishing
 
   assert.equal(gate.pass, false);
   assert.match(gate.hardFails.join("\n"), /2 central entity segment\(s\)/i);
+});
+
+test("visual retry stall detector stops identical non-improving visual gates", () => {
+  const previous = {
+    pass: false,
+    score: 84,
+    fallbackCount: 0,
+    realVisualRatio: 1,
+    uniqueVisualRatio: 1,
+    clipRatio: 1,
+    entityMisses: [6, 9],
+    repeatedStockIds: [],
+    hardFails: ["2 central entity segment(s) have no entity image/overlay."],
+  };
+  const current = {
+    ...previous,
+    score: 84.5,
+    checkedAt: "later",
+  };
+
+  assert.equal(visualGateRetryStalled(previous, current), true);
+  assert.equal(visualGateRetryStalled(previous, { ...current, pass: true, hardFails: [] }), false);
+  assert.equal(visualGateRetryStalled(previous, { ...current, score: 90 }), false);
+  assert.equal(visualGateRetryStalled(previous, { ...current, entityMisses: [9] }), false);
 });
 
 test("caption coverage near the target warns instead of blocking", () => {

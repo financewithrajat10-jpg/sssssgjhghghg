@@ -116,6 +116,7 @@ import {
   scoreStoryboardGateV2,
   setV2Status,
   updateQualityGate,
+  visualGateRetryStalled,
 } from "./modules/quality-v2.mjs";
 
 export { WorldCupError } from "./modules/utils.mjs";
@@ -620,11 +621,17 @@ async function generateWorldCupRun(input = {}) {
       await writeQualityV2Sidecars(run);
       await saveRun(run);
       const retryOptions = { ...options, visualRetryAttempt: visualAttempt, maxVisualRetries: 0 };
+      const previousStoryboardGate = storyboardGate;
       run.visualPlan = await planWorldCupVisualsWithRetries({ run, keyInfo, options: retryOptions });
       await writeVisualSidecars(run);
       run.storyboard = buildStoryboard(run);
       storyboardGate = scoreStoryboardGateV2({ run, storyboard: run.storyboard, options });
       updateQualityGate(run, "visual", storyboardGate);
+      if (visualGateRetryStalled(previousStoryboardGate, storyboardGate)) {
+        const reason = storyboardGate.hardFails?.slice(0, 2).join(" | ") || "same V2 visual gate blockers";
+        run.warnings.push(`Visual retry stopped early after attempt ${visualAttempt}: no progress on ${reason}.`);
+        break;
+      }
     }
     const captionAudioGate = scoreCaptionAudioGateV2({ run, options });
     updateQualityGate(run, "captionAudio", captionAudioGate);

@@ -70,6 +70,31 @@ export function addRetryLog(run, stage, attempt, result = {}) {
   run.retryLog.entries = run.retryLog.entries.slice(-80);
 }
 
+export function visualGateRetrySignature(gate = {}) {
+  const numeric = (value) => Number(Number(value || 0).toFixed(2));
+  return JSON.stringify({
+    hardFails: (Array.isArray(gate.hardFails) ? gate.hardFails : []).map(cleanText).filter(Boolean).sort(),
+    entityMisses: (Array.isArray(gate.entityMisses) ? gate.entityMisses : [])
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value))
+      .sort((a, b) => a - b),
+    fallbackCount: Number(gate.fallbackCount || 0),
+    realVisualRatio: numeric(gate.realVisualRatio),
+    uniqueVisualRatio: numeric(gate.uniqueVisualRatio),
+    clipRatio: numeric(gate.clipRatio),
+    repeatedStockIds: (Array.isArray(gate.repeatedStockIds) ? gate.repeatedStockIds : []).map(cleanText).filter(Boolean).sort(),
+  });
+}
+
+export function visualGateRetryStalled(previousGate = {}, currentGate = {}) {
+  if (!previousGate || !currentGate || previousGate.pass || currentGate.pass) {
+    return false;
+  }
+  const previousScore = Number(previousGate.score || previousGate.total || 0);
+  const currentScore = Number(currentGate.score || currentGate.total || 0);
+  return visualGateRetrySignature(previousGate) === visualGateRetrySignature(currentGate) && currentScore <= previousScore + 1;
+}
+
 export function scriptWordCount(script = {}) {
   return stripTagsForSpeech(script.text || script.screenplay || "")
     .split(/\s+/)
