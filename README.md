@@ -276,6 +276,12 @@ npm run worldcup:controller -- --once
 npm run worldcup:controller
 ```
 
+- Run the protected admin dashboard:
+
+```bash
+npm run worldcup:admin
+```
+
 - Required controller env:
   - `WORLD_CUP_GITHUB_REPO=owner/repo`
   - `WORLD_CUP_GITHUB_TOKEN` with fine-grained Actions write access
@@ -290,6 +296,10 @@ npm run worldcup:controller
   - `WORLD_CUP_CONTROLLER_TREND_COOLDOWN_MINUTES=60`
   - `WORLD_CUP_CONTROLLER_SKIP_NOTICE_COOLDOWN_MINUTES=180`
   - `WORLD_CUP_CONTROLLER_DB_FILE=.tmp-worldcup/azure-controller-state.sqlite`
+  - `WORLD_CUP_ADMIN_HOST=127.0.0.1` keeps the dashboard local to the VM by default.
+  - `WORLD_CUP_ADMIN_PORT=8787`
+  - `WORLD_CUP_ADMIN_USER=admin`
+  - `WORLD_CUP_ADMIN_PASSWORD=...` is required; do not commit the real password.
   - `WORLD_CUP_ESPN_ENABLED=true` enables ESPN scoreboard match-window triggers.
   - `WORLD_CUP_MATCH_LOOKAHEAD_DAYS=3`
   - `WORLD_CUP_PREMATCH_TARGET_HOURS=36`
@@ -333,6 +343,7 @@ npm run worldcup:controller
   - `WORLD_CUP_FIXTURES_JSON=[{"date":"2026-06-12","teamA":"USA","teamB":"Paraguay","kickoff":"2026-06-13T02:00:00Z","topic":"USA vs Paraguay World Cup prediction"}]`
 - Prediction videos trigger when a VIP fixture is between 12 and 72 hours before kickoff by default. Postmatch videos trigger after expected full-time plus a safety delay.
 - ESPN VIP matches now create the main pre-match and post-match candidates. YouTube spike scans and the analyzer create trend candidates. When no ESPN or YouTube candidate passes, the controller skips instead of dispatching filler content. The selected candidate is sent to the existing `worldcup-pipeline.yml` `workflow_dispatch` inputs so GitHub Actions starts the same scraping, evidence, content, render, and upload pipeline.
+- The admin dashboard reads the same SQLite DB and shows match trigger status, YouTube pool/spike health, recent scans, and recent dispatches. It also has protected buttons for a dry-run scan and a confirmed one-time live controller run.
 - Telegram manual dispatch commands:
   - `/wc topic Ronaldo vs Messi 2026 World Cup bracket`
   - `/wc prediction USA vs Paraguay | USA vs Paraguay pressure prediction | 2026-06-13T02:00:00Z`
