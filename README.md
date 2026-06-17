@@ -320,7 +320,6 @@ npm run worldcup:controller
   - Discovery uses about 48 YouTube `search.list` calls/day by default; 30-minute stats refresh uses `videos.list` on the saved 24-hour pool.
   - `npm run worldcup:youtube-health` prints the last-24-hour trend finder diagnostics from SQLite.
   - `WORLD_CUP_ANALYZER_MODEL=gemini-3.1-flash-lite` clusters repeated YouTube spike topics; set this to your Gemini 4-compatible model when available.
-  - `WORLD_CUP_EVERGREEN_FALLBACK=true` lets the controller dispatch a safe evergreen World Cup topic when no spike or match-window candidate passes.
   - `WORLD_CUP_CONTROLLER_ENABLE_GEMINI_TRENDS=false` keeps trend discovery on fixtures plus YouTube Data API. Set it to `true` only when you intentionally want to spend Gemini search-grounding quota.
   - `WORLD_CUP_LEGACY_TRIGGER_ENABLED=false` keeps the old checked-in fixture/old YouTube/old Gemini trend finder dormant. Set to `true` only for rollback comparison.
   - `WORLD_CUP_CONTROLLER_TELEGRAM_COMMANDS=true` lets the VM listen for manual Telegram commands.
@@ -333,7 +332,7 @@ npm run worldcup:controller
   - `WORLD_CUP_INTENT_LLM_TIMEOUT_MS=15000`
   - `WORLD_CUP_FIXTURES_JSON=[{"date":"2026-06-12","teamA":"USA","teamB":"Paraguay","kickoff":"2026-06-13T02:00:00Z","topic":"USA vs Paraguay World Cup prediction"}]`
 - Prediction videos trigger when a VIP fixture is between 12 and 72 hours before kickoff by default. Postmatch videos trigger after expected full-time plus a safety delay.
-- ESPN VIP matches now create the main pre-match and post-match candidates. YouTube spike scans and the analyzer run before match-window candidates, and evergreen fallback runs last so the controller does not silently starve on empty trend data. The selected candidate is sent to the existing `worldcup-pipeline.yml` `workflow_dispatch` inputs so GitHub Actions starts the same scraping, evidence, content, render, and upload pipeline.
+- ESPN VIP matches now create the main pre-match and post-match candidates. YouTube spike scans and the analyzer create trend candidates. When no ESPN or YouTube candidate passes, the controller skips instead of dispatching filler content. The selected candidate is sent to the existing `worldcup-pipeline.yml` `workflow_dispatch` inputs so GitHub Actions starts the same scraping, evidence, content, render, and upload pipeline.
 - Telegram manual dispatch commands:
   - `/wc topic Ronaldo vs Messi 2026 World Cup bracket`
   - `/wc prediction USA vs Paraguay | USA vs Paraguay pressure prediction | 2026-06-13T02:00:00Z`

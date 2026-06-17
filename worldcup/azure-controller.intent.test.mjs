@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
-  buildEvergreenFallbackCandidate,
   candidateKey,
   controllerWorkflowConclusion,
   controllerConfig,
@@ -20,6 +19,7 @@ import {
   parseTelegramWorldCupCommand,
   persistControllerState,
   mp4EvidenceFromZip,
+  recordEspnMatches,
   runYouTubeDiscoveryIfDue,
   runYouTubeStatsRefreshIfDue,
   buildYouTubeClusterCandidates,
@@ -674,6 +674,43 @@ test("SQLite controller state persists dispatched duplicates", async () => {
   }
 });
 
+test("ESPN completion timestamp updates when an existing row has an empty value", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wc-controller-"));
+  const config = controllerConfig({
+    dbFile: path.join(tempDir, "controller.sqlite"),
+    stateFile: path.join(tempDir, "legacy.json"),
+    postmatchMaxAgeHours: 12,
+  });
+  const db = await openControllerDb(config);
+  try {
+    const baseMatch = {
+      id: "760432",
+      name: "Senegal at France",
+      kickoff: "2026-06-16T19:00:00.000Z",
+      status: "Scheduled",
+      completed: false,
+      home: "France",
+      away: "Senegal",
+      score: "France 0 - 0 Senegal",
+    };
+    recordEspnMatches(db, [baseMatch], "2026-06-16T18:00:00.000Z", config);
+    assert.equal(db.prepare("SELECT first_completed_seen_at FROM espn_matches WHERE match_id = ?").get("760432").first_completed_seen_at, "");
+
+    const completedMatch = {
+      ...baseMatch,
+      status: "Full Time",
+      completed: true,
+      score: "France 3 - 1 Senegal",
+    };
+    recordEspnMatches(db, [completedMatch], "2026-06-16T21:30:00.000Z", config);
+    const row = db.prepare("SELECT first_completed_seen_at, snapshot_json FROM espn_matches WHERE match_id = ?").get("760432");
+    assert.equal(row.first_completed_seen_at, "2026-06-16T21:30:00.000Z");
+    assert.equal(JSON.parse(row.snapshot_json).firstCompletedSeenAt, "2026-06-16T21:30:00.000Z");
+  } finally {
+    db.close();
+  }
+});
+
 test("YouTube spike metrics detect stronger current velocity", () => {
   const now = new Date("2026-06-14T12:00:00Z");
   const metrics = youtubeSpikeMetrics(
@@ -932,22 +969,6 @@ test("rolling YouTube cluster requires 10 spike videos before creating workflow 
   }
 });
 
-test("evergreen fallback can pass the gate when strict trend threshold would block normal trends", () => {
-  const config = {
-    evergreenFallback: true,
-    dailyTotalLimit: 5,
-    dailyTrendLimit: 5,
-    requiredGroundedSources: 1,
-    staleDispatchRetryMinutes: 120,
-    trendCooldownMinutes: 0,
-    trendThreshold: 95,
-  };
-  const state = { dispatched: {} };
-  const fallback = buildEvergreenFallbackCandidate(state, config, new Date("2026-06-14T12:00:00Z"));
-  const result = selectCandidate([fallback], state, config, new Date("2026-06-14T12:00:00Z"));
-  assert.equal(result.selected.source, "evergreen-fallback");
-});
-
 test("duplicate-only no-candidate scans do not spam Telegram notices", () => {
   const decision = noCandidateNoticeDecision(
     {},
@@ -964,7 +985,6 @@ test("duplicate-only no-candidate scans do not spam Telegram notices", () => {
         youtubeSpikeCandidates: 0,
         youtubeCandidates: 0,
         geminiTrendCandidate: false,
-        evergreenCandidate: true,
       },
     },
     { skipNoticeCooldownMinutes: 180 },
@@ -996,7 +1016,6 @@ test("routine daily-limit no-candidate scans do not spam Telegram notices", () =
         youtubeSpikeCandidates: 0,
         youtubeCandidates: 0,
         geminiTrendCandidate: false,
-        evergreenCandidate: true,
       },
     },
     { skipNoticeCooldownMinutes: 180 },
@@ -1021,7 +1040,6 @@ test("non-duplicate no-candidate notices are throttled by notice key", () => {
       youtubeSpikeCandidates: 1,
       youtubeCandidates: 0,
       geminiTrendCandidate: false,
-      evergreenCandidate: false,
     },
   };
   const config = { skipNoticeCooldownMinutes: 180 };

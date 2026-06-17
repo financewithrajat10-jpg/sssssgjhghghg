@@ -2,7 +2,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 import { path, fs, cleanText, hashText, nowIso, sleep, repoRoot, worldCupRoot, requestGeminiJsonWithFallbacks, getActiveGeminiKey } from "./modules/utils.mjs";
-import { knownOpeningFixtures, preTournamentTopics } from "./modules/scheduler.mjs";
+import { knownOpeningFixtures } from "./modules/scheduler.mjs";
 
 const DEFAULT_INTERVAL_MINUTES = 15;
 const DEFAULT_TREND_THRESHOLD = 95;
@@ -301,7 +301,6 @@ function controllerConfig(args = {}) {
       numberArg(args.youtubeDiagnosticRetentionHours || process.env.WORLD_CUP_YOUTUBE_DIAGNOSTIC_RETENTION_HOURS, DEFAULT_YOUTUBE_DIAGNOSTIC_RETENTION_HOURS),
     ),
     analyzerModel: cleanText(args.analyzerModel || process.env.WORLD_CUP_ANALYZER_MODEL || process.env.WORLD_CUP_SEARCH_MODEL || DEFAULT_ANALYZER_MODEL),
-    evergreenFallback: boolArg(args.evergreenFallback ?? process.env.WORLD_CUP_EVERGREEN_FALLBACK, true),
     skipNoticeCooldownMinutes: Math.max(0, numberArg(args.skipNoticeCooldownMinutes || process.env.WORLD_CUP_CONTROLLER_SKIP_NOTICE_COOLDOWN_MINUTES, DEFAULT_SKIP_NOTICE_COOLDOWN_MINUTES)),
     telegramBotToken: cleanText(process.env.WORLD_CUP_CONTROLLER_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || ""),
     telegramChatId: cleanText(process.env.WORLD_CUP_CONTROLLER_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID || ""),
@@ -613,7 +612,7 @@ function recordEspnMatches(db, matches = [], scannedAt = nowIso(), config = {}) 
       away = excluded.away,
       score = excluded.score,
       snapshot_json = excluded.snapshot_json,
-      first_completed_seen_at = COALESCE(espn_matches.first_completed_seen_at, excluded.first_completed_seen_at),
+      first_completed_seen_at = COALESCE(NULLIF(espn_matches.first_completed_seen_at, ''), NULLIF(excluded.first_completed_seen_at, ''), ''),
       last_seen_at = excluded.last_seen_at
   `);
   for (const match of matches) {
@@ -1038,7 +1037,7 @@ function normalizeEspnEvent(event = {}) {
   const statusType = event.status?.type || {};
   const status = cleanText(statusType.description || statusType.name || event.status?.description || "");
   const statusState = cleanText(statusType.state || "").toLowerCase();
-  const completed = Boolean(statusType.completed) || statusState === "post" || /^(final|ft|full time|full-time)$/i.test(status);
+  const completed = Boolean(statusType.completed) || /^(final|ft|full time|full-time)$/i.test(status);
   const homeScore = cleanText(home?.score || "0");
   const awayScore = cleanText(away?.score || "0");
   return {
@@ -2095,31 +2094,8 @@ Return JSON only:
   }
 }
 
-function buildEvergreenFallbackCandidate(state = {}, config = {}, now = new Date()) {
-  if (!config.evergreenFallback) return null;
-  const topics = preTournamentTopics();
-  if (!topics.length) return null;
-  const dispatchedKeys = new Set(Object.keys(state.dispatched || {}));
-  for (let offset = 0; offset < topics.length; offset += 1) {
-    const topic = topics[(now.getUTCDate() + offset) % topics.length];
-    const candidate = {
-      type: "pre-tournament",
-      topic,
-      teamA: "",
-      teamB: "",
-      kickoff: "",
-      matchId: `evergreen-${hashText(topic).slice(0, 12)}`,
-      score: 80,
-      reason: "Evergreen fallback selected because no stronger live spike or match-window candidate passed.",
-      source: "evergreen-fallback",
-    };
-    if (!dispatchedKeys.has(candidateKey(candidate))) return candidate;
-  }
-  return null;
-}
-
 function candidateGroundedSourceCount(candidate) {
-  if (["fixture-scheduler", "espn-scoreboard", "evergreen-fallback"].includes(candidate?.source)) return 1;
+  if (["fixture-scheduler", "espn-scoreboard"].includes(candidate?.source)) return 1;
   if (["youtube", "youtube-spike"].includes(candidate?.source)) return candidate.youtube?.id ? 1 : 0;
   if (candidate?.source === "youtube-spike-cluster") return Array.isArray(candidate.evidence) ? candidate.evidence.length : 1;
   if (candidate?.source === "gemini-topic-analyzer") return Array.isArray(candidate.evidence) ? candidate.evidence.length : 1;
@@ -2129,7 +2105,6 @@ function candidateGroundedSourceCount(candidate) {
 }
 
 function candidateHasRecognizableEntity(candidate) {
-  if (candidate?.source === "evergreen-fallback") return true;
   const text = candidateText(candidate);
   return (
     MAJOR_TEAM_PATTERN.test(normalizeTeamComparable(text)) ||
@@ -2141,10 +2116,6 @@ function candidateHasRecognizableEntity(candidate) {
 
 function isScheduledMatchCandidate(candidate) {
   return ["fixture-scheduler", "espn-scoreboard"].includes(candidate?.source);
-}
-
-function isFallbackCandidate(candidate) {
-  return candidate?.source === "evergreen-fallback";
 }
 
 function isSpikeCandidate(candidate) {
@@ -2190,7 +2161,6 @@ function candidateGate(candidate, state, config, now = new Date()) {
   const reasons = [];
   const stats = dispatchStatsForToday(state, now);
   const isFixtureCandidate = isScheduledMatchCandidate(candidate);
-  const isFallback = isFallbackCandidate(candidate);
   if (candidate.duplicate) {
     reasons.push(DUPLICATE_GATE_REASON);
   }
@@ -2206,7 +2176,7 @@ function candidateGate(candidate, state, config, now = new Date()) {
     };
   }
 
-  if (!isFallback && candidate.score < config.trendThreshold) {
+  if (candidate.score < config.trendThreshold) {
     reasons.push(`trend score ${candidate.score} is below strict threshold ${config.trendThreshold}`);
   }
   if (stats.trends >= config.dailyTrendLimit) {
@@ -2289,7 +2259,6 @@ function noCandidateNoticeDecision(state = {}, scan = {}, config = {}, now = new
       diagnostics.youtubeSpikeCandidates || 0,
       diagnostics.youtubeCandidates || 0,
       diagnostics.geminiTrendCandidate ? 1 : 0,
-      diagnostics.evergreenCandidate ? 1 : 0,
     ].join(":"),
   ).slice(0, 20);
   const cooldownMs = Math.max(0, Number(config.skipNoticeCooldownMinutes || 0)) * 60 * 1000;
@@ -3096,14 +3065,12 @@ async function runControllerOnce(config) {
   const youtubeDiagnostics = youtubeSpikeResult.diagnostics || {};
   const youtubeCandidates = config.offline || !config.legacyTriggerEnabled ? [] : await buildYouTubeCandidates(config, warnings);
   const geminiCandidate = config.offline || !config.legacyTriggerEnabled || !config.enableGeminiTrends ? null : await buildGeminiTrendCandidate(warnings);
-  const evergreenCandidate = buildEvergreenFallbackCandidate(state, config, now);
   const rawCandidates = [
     ...youtubeSpikeCandidates,
     ...espnCandidates,
     ...matchCandidates,
     ...youtubeCandidates,
     ...(geminiCandidate ? [geminiCandidate] : []),
-    ...(evergreenCandidate ? [evergreenCandidate] : []),
   ];
   const { selected, candidates } = selectCandidate(rawCandidates, state, config, now);
   const scan = {
@@ -3121,7 +3088,6 @@ async function runControllerOnce(config) {
       youtubeCluster: youtubeDiagnostics.cluster || null,
       youtubeCandidates: youtubeCandidates.length,
       geminiTrendCandidate: Boolean(geminiCandidate),
-      evergreenCandidate: Boolean(evergreenCandidate),
       legacyTriggerEnabled: config.legacyTriggerEnabled,
       rawCandidateCount: rawCandidates.length,
     },
@@ -3142,7 +3108,7 @@ async function runControllerOnce(config) {
     const topReason = top?.gate?.reasons?.length ? ` Reason: ${top.gate.reasons.join("; ")}.` : "";
     const ytStats = youtubeDiagnostics.stats || {};
     const ytCluster = youtubeDiagnostics.cluster || {};
-    const diagnosticText = ` Sources: ESPN ${espnCandidates.length}, YouTube clusters ${youtubeSpikeCandidates.length}, YouTube trends ${youtubeCandidates.length}, Gemini ${geminiCandidate ? 1 : 0}, fallback ${evergreenCandidate ? 1 : 0}. YouTube pool ${ytStats.activePoolSize || 0}, refreshed ${ytStats.videosUpdated || 0}, spike videos ${ytStats.spikeEligible || 0}, strongest cluster ${ytCluster.strongestSize || 0}/${config.youtubeTopicMinSpikeVideos}.`;
+    const diagnosticText = ` Sources: ESPN ${espnCandidates.length}, YouTube clusters ${youtubeSpikeCandidates.length}, YouTube trends ${youtubeCandidates.length}, Gemini ${geminiCandidate ? 1 : 0}. YouTube pool ${ytStats.activePoolSize || 0}, refreshed ${ytStats.videosUpdated || 0}, spike videos ${ytStats.spikeEligible || 0}, strongest cluster ${ytCluster.strongestSize || 0}/${config.youtubeTopicMinSpikeVideos}.`;
     const noticeDecision = noCandidateNoticeDecision(state, scan, config, now);
     scan.noCandidateNotice = noticeDecision;
     scan.diagnostics.noCandidateNotice = noticeDecision;
@@ -3163,7 +3129,7 @@ async function runControllerOnce(config) {
     persistControllerState(db, state);
     return { telegramCommands: commandResults, skipped: false, selected, dispatch, scan };
   }
-  const selectedLabel = isScheduledMatchCandidate(selected) ? "Scheduled match window" : isFallbackCandidate(selected) ? "Evergreen fallback" : "High-confidence trend";
+  const selectedLabel = isScheduledMatchCandidate(selected) ? "Scheduled match window" : "High-confidence trend";
   await sendTelegram(config, `${selectedLabel}: ${selected.topic}\nScore: ${selected.score}\nTriggering GitHub workflow...`).catch(() => null);
   const dispatchedAt = nowIso();
   try {
@@ -3254,7 +3220,6 @@ async function main() {
 }
 
 export {
-  buildEvergreenFallbackCandidate,
   candidateKey,
   controllerWorkflowConclusion,
   controllerConfig,
@@ -3272,6 +3237,7 @@ export {
   parseTelegramWorldCupCommand,
   persistControllerState,
   mp4EvidenceFromZip,
+  recordEspnMatches,
   runYouTubeDiscoveryIfDue,
   runYouTubeStatsRefreshIfDue,
   buildYouTubeClusterCandidates,
