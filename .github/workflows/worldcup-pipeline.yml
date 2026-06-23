@@ -1,8 +1,6 @@
 name: World Cup content pipeline
 
 on:
-  schedule:
-    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -164,7 +162,6 @@ env:
   GEMINI_LITE_TEXT_MODEL: ${{ vars.GEMINI_LITE_TEXT_MODEL || 'gemini-3.1-flash-lite' }}
   GEMINI_RETRY_DELAYS: ${{ vars.GEMINI_RETRY_DELAYS || '5000,10000,15000' }}
   WORLD_CUP_TOPICS: ${{ vars.WORLD_CUP_TOPICS }}
-  GITHUB_EVENT_NAME: ${{ github.event_name }}
   INPUT_MODE: ${{ github.event.inputs.mode || (github.event_name == 'workflow_dispatch' && 'auto' || 'auto') }}
   INPUT_STRATEGY: ${{ github.event.inputs.strategy || vars.WORLD_CUP_STRATEGY || 'viral2' }}
   INPUT_DATE: ${{ github.event.inputs.date || '' }}
@@ -219,7 +216,6 @@ jobs:
         run: |
           mkdir -p .tmp-worldcup
           node worldcup/cli.mjs \
-            --scheduled \
             --mode "$INPUT_MODE" \
             --strategy "$INPUT_STRATEGY" \
             --date "$INPUT_DATE" \
@@ -255,11 +251,7 @@ jobs:
           }
           const lastResult = JSON.parse(fs.readFileSync(lastResultPath, 'utf8'));
           if (lastResult.skipped) {
-            if (process.env.GITHUB_EVENT_NAME === 'schedule') {
-              console.log(`Scheduled World Cup run skipped normally: ${lastResult.reason || 'no reason'}`);
-              process.exit(0);
-            }
-            throw new Error(`Manual World Cup pipeline skipped instead of producing a video: ${lastResult.reason || 'unknown reason'}`);
+            throw new Error(`Dispatched World Cup pipeline skipped instead of producing a video: ${lastResult.reason || 'unknown reason'}`);
           }
           const indexPath = path.join('.tmp-worldcup', 'index.json');
           if (!fs.existsSync(indexPath)) {
