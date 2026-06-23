@@ -17,3 +17,9 @@ downloads/**/*.mp4
 downloads/**/Reels/
 image-reel-builder/.tmp-binary-payload.json
 image-reel-builder/.tmp-renders/
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+!.env.example
