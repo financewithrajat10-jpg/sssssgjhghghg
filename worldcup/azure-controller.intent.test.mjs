@@ -29,6 +29,7 @@ import {
   youtubeRollingSpikeMetrics,
   youtubeSpikeMetrics,
 } from "./azure-controller.mjs";
+import { isVipMatch as isDashboardVipMatch } from "./admin-dashboard.mjs";
 
 function mockYoutubeResponse(payload, ok = true, status = 200) {
   return {
@@ -383,6 +384,13 @@ test("ESPN final status creates post-match candidate", () => {
   );
   assert.equal(candidate.type, "postmatch");
   assert.match(candidate.reason, /Final score/i);
+});
+
+test("admin dashboard VIP matching mirrors controller exact team matching", () => {
+  assert.equal(isDashboardVipMatch({ home: "New Mexico United", away: "Orange County SC", name: "Orange County SC at New Mexico United" }), false);
+  assert.equal(isDashboardVipMatch({ home: "Universidad de Chile", away: "Union La Calera", name: "Union La Calera at Universidad de Chile" }), false);
+  assert.equal(isDashboardVipMatch({ home: "Camioneros", away: "Arsenal Sarandi", name: "Arsenal Sarandi at Camioneros" }), false);
+  assert.equal(isDashboardVipMatch({ home: "Brazil", away: "Morocco", name: "Morocco at Brazil" }), true);
 });
 
 test("ESPN post-match waits for first completed seen time plus delay", () => {

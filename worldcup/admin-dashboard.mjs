@@ -136,14 +136,10 @@ function normalizeComparable(value) {
     .trim();
 }
 
-function regexEscape(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function teamMatchesVip(teamName, vipTeam) {
   const name = normalizeComparable(teamName);
   const vip = normalizeComparable(vipTeam);
-  return Boolean(name && vip && new RegExp(`\\b${regexEscape(vip)}\\b`, "i").test(name));
+  return Boolean(name && vip && name === vip);
 }
 
 function listArg(value, fallback = []) {
@@ -159,7 +155,7 @@ const vipTeams = [...new Set([...listArg(process.env.WORLD_CUP_VIP_TEAMS), ...DE
 
 function isVipMatch(match) {
   const teams = [match.home, match.away].map(cleanText);
-  return vipTeams.some((team) => teams.some((name) => teamMatchesVip(name, team)) || teamMatchesVip(match.name, team));
+  return vipTeams.some((team) => teams.some((name) => teamMatchesVip(name, team)));
 }
 
 function candidateKey(candidate) {
@@ -1111,4 +1107,4 @@ function main() {
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) main();
 
-export { getDispatches, getMatches, getScans, getSummary, getYouTubeHealth };
+export { getDispatches, getMatches, getScans, getSummary, getYouTubeHealth, isVipMatch };
